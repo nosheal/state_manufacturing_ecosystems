@@ -1,0 +1,406 @@
+---
+title: "Triangulating Data on State Ecosystems"
+author: "Nikhil Kalathil"
+date: "2023-04-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document outlines a set of procedures for ingesting, cleaning, and organizing data from the SLEDS database, NIST MEP Client interactions, and the EDA Grants. For each data source, there are unique data cleaning needs and challenges. Ultimately, we want to measure states based on how aligned their strategies are across multiple organizations. 
+
+To work towards this goal, we begin by categorizing the main actors and activities involved in each state, across each of the datasets. 
+
+Actors are the individual entities, organizations, and groups of organizations involved in manufacturing products or delivering services to manufacturers. These include: 
+
+```{r}
+actors <- c("Association", "Federal Government", "For-Profit Consultants", "Higher Education", "Non-Profit Organizations", "Other", "Regional EDO", "State/Local Government", "SME", "Large Firm")
+```
+
+These actors are either the beneficiary or provider of specific services, that are the mechanisms through which actors execute upon actions (sometimes in pursuit of a strategic agenda). 
+
+```{r}
+services <- c("grants/loans", "technical assistance", "research", "public/private partnerships", "regulatory enforcement and improvements", "standards")
+```
+
+Our ability to obtain complete information about the actors involved, and the services provided, at each level of a state's ecosystem will vary substantially across states. However, we hope to use some of this measurement difficulty as representative of the degree of alignment and strategic initiative across the state. 
+
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 18))
+```
+
+
+# Data Ingestion and Cleaning
+
+We now begin bringing in our SLEDS, EDA, and NIST MEP Databases. 
+
+## SLEDS 
+
+The SLEDS database is intended to convey alignment between state plans and regional economic development actions, and combines 53 state plans with 379 Comprehensive Economic Development Strategy (CEDS) plans, which Economic Development Districts (EDDs) are required to submit to be designated as such. These are typically updated on a 5-year cycle. Curiously, Texas, California, and Connecticut do not have identifiable state plans. 
+
+The SLEDS database uses a hierarchical approach to compare plans, grouping plans based on their general economic development objective (category), the precise topic area (approach), and specific actions or tasks (activity) when available. 
+
+
+
+
+```{r}
+
+box_dir <- "C:/Users/Nikhil Kalathil/Box/Nikhil's Research/State Economic Development/"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+```{r}
+sleds_raw <- read.csv(box_here("EDA_Matrix_Import.csv"))
+```
+
+```{r}
+sleds_raw %>% 
+  group_by(State, Plan_Type) %>% 
+  count() %>% 
+  pivot_wider(names_from = c("Plan_Type"), values_from = c("n"))
+```
+
+We notice that there is substantial variation in both state plans, as well as EDD CEDS plans submitted by each state. 
+
+```{r}
+sleds_raw %>% 
+  group_by(Plan_Type, Region_Name, State) %>% 
+  count()
+```
+
+
+```{r}
+sleds_raw <- sleds_raw %>% 
+  mutate(manufacturing = case_when(
+    Economic_Development_Category %in% c("Industry Cluster Development", "Manufacturing") ~ 1
+  ))
+```
+
+
+We start by comparing Alabama, with Washington, two states that we have interviewed and have detailed knowledge about their pandemic response, but varied substantially in their ability to engage in successful cross-agency and cross-organizational collaborations in response to the COVID-19 pandemic. 
+
+```{r}
+al_state <- sleds_raw %>% 
+  filter(State %in% c("Alabama"), Region_Name %in% c("Statewide")) 
+```
+
+We see that there is some need for additional data cleaning, and that the "Economic Development Category" variable is arguably not very useful. For now, we proceed with summary statistics to get a picture of the data, and save data cleaning for later. 
+
+```{r}
+al_state %>% 
+  filter(!Activity %in% c("Marketing/Advertising")) %>% 
+  group_by(Economic_Development_Category, Activity) %>% 
+  count()
+```
+
+```{r}
+al_state %>%
+  filter(!Activity %in% c("Marketing/Advertising")) %>%
+  group_by(Activity) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+```{r}
+activity_summary <- function(data){
+  data %>% 
+  filter(!Activity %in% c("Marketing/Advertising")) %>%
+  group_by(Activity) %>% 
+  count() %>% 
+  arrange(desc(n))
+}
+```
+
+
+Outside of marketing and advertising, Alabama's top listed programs focus on research and evaluation, information and data dissemination, and brokerage, and provision of capital, as main categories of state support for a variety of economic development initiatives.
+
+In addition, Alabama has 10 Economic Development Districts that have CEDS plans submitted. 
+
+```{r}
+al_edd <- sleds_raw %>% 
+  filter(State %in% c("Alabama"), !Region_Name %in% c("Statewide")) 
+```
+
+```{r}
+al_edd %>% 
+  group_by(Region_Name) %>% 
+  count()
+```
+
+```{r}
+al_edd %>% 
+  activity_summary()
+```
+
+Again, we see a strong need for further data cleaning. 
+
+```{r}
+al_edd %>% 
+  filter(Activity == "") %>% 
+  view()
+```
+
+Missing activity data span the range of other activities, and will need to be cleaned at some point to complete the analysis. However, we see that most EDD plans reference "Program Development and Support", followed by brokerage, policy and planning, Education and Training, and funding. The range of activities engaged in by EDDS is more varied than the set of activities laid out at the State level, with some being more directly actionable and focused than others. This structure suggests that we may want to perform further analysis on the specific EDD programs to see how they match (or do not match) against state stated strategies.
+
+To help us understand between state variation, as well as better contextualize the within-state structure we see within Alabama, we now examine the case of Washington.
+
+
+```{r}
+wa_state <- sleds_raw %>% 
+  filter(State %in% c("Washington"), Region_Name %in% c("Statewide")) 
+```
+
+
+Despite having a larger economy than Alabama, Washington has a much parser state strategy plan. 
+
+```{r}
+wa_state %>% 
+  activity_summary()
+```
+
+A qualitative review of the stated strategies suggest that the proposed state plans are far more indirect, less targeted, and overall less focused than Alabama's plan. 
+
+```{r}
+wa_edd <-sleds_raw %>% 
+  filter(State %in% c("Washington"), !Region_Name %in% c("Statewide")) 
+```
+
+```{r}
+wa_edd %>% 
+  group_by(Region_Name) %>% 
+  count()
+```
+ Washington has six economic development districts. 
+ 
+```{r}
+wa_edd %>% 
+  activity_summary()
+```
+ 
+In comparison to the state plan, Washington's EDD CEDS plans appear to be more targeted and focused around specific goals. Again, variation in plans, as well as missing data, suggests that further NLP on this database may prove very useful in being able to characterize state economic development ecosystems. 
+
+
+## NIST Data 
+
+```{r}
+NIST_raw <- read_excel(box_here("nist_data.xlsx"))
+```
+
+
+```{r}
+al_nist <- NIST_raw %>% 
+  filter(`Client State` %in% c("Alabama")) %>% 
+  mutate(project_year = substr(`Period Completed`, 0, 4)) 
+```
+
+```{r}
+al_nist %>% 
+  group_by(project_year) %>% 
+  count()
+```
+
+
+In Alabama, the NIST MEP center averages just under 250 projects per year, with a maximum of 298 projects in 2019, and 259 projects in 2016. 
+
+```{r}
+al_nist %>% 
+  group_by(`Substance Code Description`) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+Across all years, NIST client projects fall into 10 categories, with ISO/Quality support services topping the list of projects, followign by lean business upgradng. Notably lower on the list are workforce and information technology services. 
+
+```{r}
+al_nist %>% 
+  group_by(project_year, `Substance Code Description`) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+However, in each individual year, the set of project actives shifts slightly. For example, in 2020, NIST provided more strategic business management services, while in 2018 and 2019 they focused more on providing quality control upgrading and lean business upgrading services. 
+
+We now want to compare Alabama against Washington to continue building out our understanding of manufacturing ecosystems across our different databases. 
+
+
+```{r}
+wa_nist <- NIST_raw %>% 
+  filter(`Client State` %in% c("Washington")) %>% 
+  mutate(project_year = substr(`Period Completed`, 0, 4)) 
+```
+
+```{r}
+wa_nist %>% 
+  group_by(project_year) %>% 
+  count()
+```
+
+In contrast, Washington averages far fewer MEP client projects: only 116 per year, with the fewest projects in 2019 (61) and the most in 2020 (246). 
+
+```{r}
+wa_nist %>% 
+  group_by(`Substance Code Description`) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+Similarly, there are some subtle differences in the type of projects that the Washington NIST MEP center conducts, and the Alabama MEP center. 
+
+```{r}
+wa_nist %>% 
+  group_by(project_year, `Substance Code Description`) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+# Dependent Variable 
+
+Finally, we take a look at our dependent variable: state spending of $150B in federal dollars in response to the COVID-19 pandemic. Here, we have created a shortened database of 10 states: Alabama, Indiana, Massachusetts, Michigan, Missouri, New York, North Carolina, Pennsylvania, Washington, and Arizona. The next step of this process will be to return to the process described in the previous section, and create data slices for the other 8 states (outside of Alabama and Washington). 
+
+```{r}
+state_draft <- c("Alabama", "Indiana", "Massachusetts", "Michigan", "Missouri", "New York", "North Carolina", "Pennsylvania", "Washington", "Arizona")
+```
+
+
+```{r}
+state_action <- read_csv(box_here("state_action_draft.csv"))
+```
+
+
+```{r}
+state_sum <- state_action %>% 
+  filter(!Category %in% c("Total")) %>% 
+  group_by(State) %>%  
+  summarise(total = sum(Amount))
+```
+
+```{r}
+col1 <- brewer.pal(8, "Set2")[3]
+```
+
+
+```{r}
+state_sum_1 <- state_sum %>% 
+  mutate(total = round(total/1000, 2)) %>% 
+  ggplot() + 
+  geom_col(aes(reorder(State, total), total), fill = col1, color = "black", alpha = 0.8) +  
+  geom_text(aes(reorder(State, total), total - .1, label = round(total,1))) + 
+  coord_flip() + 
+  theme_bw() + 
+  labs(y = "Billions of Dollars in Federal CARES Funding Spent by State", x = "State") + 
+  title_theme + 
+  axis_theme
+```
+
+Here, states vary in how much of the federal pie they spent. Much of this variation is likely captured by the size of each state's economy. We can test this by bringing in QCEW data. 
+
+## QCEW Data 
+
+```{r}
+qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
+```
+
+```{r}
+qcew_prelim <- qcew_state %>% 
+  filter(year == 2020, industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+```{r}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+```{r}
+qcew_states <- area_codes %>% 
+  left_join(states) %>% 
+  left_join(qcew_prelim, .)
+```
+
+```{r}
+state_sum_2 <- qcew_states %>% 
+  filter(area_title %in% state_draft) %>% 
+  select(State = area_title, tot_emp, state_abbr) %>% 
+  left_join(state_sum) %>% 
+  ggplot() + 
+  geom_point(aes(x = tot_emp, y = total), shape = 21, fill = col1, size = 3, color = "black", alpha = 0.8) + 
+  geom_text(aes(x = tot_emp + 100000, y = total, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-3)) + 
+  theme_bw() +
+  labs(x = "Total Employees in 2020", y = "Federal CARES Act Funding Spent \n(Billions of $)") +
+  title_theme + 
+  axis_theme
+```
+
+We see indeed that there appears to be some correlation between the size of the state's economy and the amount of CARES funding spent, but certain states appear to be defying the pattern (PA and NY for example). Further exploring how much money states were able to spend (as opposed to how much they were allocated), may be an important strand of this research. 
+
+We now dive further into the variation in how states spent CARES funding across a number of discrete spending categories. 
+
+```{r}
+col2 <- c(brewer.pal(8, "Set2"), brewer.pal(8, "Set3")[1:4])
+```
+
+
+```{r}
+state_sum_3 <- state_action %>% 
+  filter(!Category %in% c("Total")) %>% 
+  mutate(Category = str_replace(Category, "\\+", "\\+\n")) %>% 
+  group_by(State, Category) %>% 
+  summarise(total = sum(Amount)) %>% 
+  group_by(State) %>% 
+  mutate(state_total = sum(total)) %>% 
+  ungroup() %>% 
+  mutate(percent_spent = total/state_total) %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(State, -state_total), y = percent_spent, fill = Category, group = Category), color = "black", alpha = 0.8) + 
+  scale_fill_manual(values = col2)  + 
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw() + 
+  labs(x = "State", y = "Percent of Federal CARES Funding Spent by Category", fill = "Spending Category") + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.text = element_text(size = 14)) 
+```
+

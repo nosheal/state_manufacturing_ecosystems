@@ -1,0 +1,2225 @@
+---
+title: "firm_entry"
+author: "Nikhil Kalathil"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document takes the cleaned final sample and provides descriptive statistics and preliminary regression results for a variety of firm entry hypotheses. 
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+
+```{r}
+
+box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+```{r}
+firm_size_fn <- function(data){
+  data %>% 
+    mutate(firm_size = case_when(
+      sales_dbh < 1000000 ~ "Under $1 Mil", 
+      sales_dbh >= 1000000 & sales_dbh < 10000000 ~ "$1M-$10M", 
+      sales_dbh >= 10000000 & sales_dbh < 50000000 ~ "$10M-$50M", 
+      sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ "$50M-$1B", 
+      sales_dbh >= 1000000000 ~ "$1B + ", 
+      is.na(sales_dbh) ~ "Missing"
+    ), 
+    size_pos = case_when(
+      sales_dbh < 1000000 ~ 5, 
+      sales_dbh >= 1000000 & sales_dbh < 10000000 ~ 4, 
+      sales_dbh >= 10000000 & sales_dbh < 50000000 ~ 3, 
+      sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ 2, 
+      sales_dbh >= 1000000000 ~ 1, 
+      is.na(sales_dbh) ~ 6
+    ))
+}
+```
+
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 18))
+```
+
+
+# Import Sample
+
+```{r, eval = FALSE}
+final_sample <- final_sample %>% 
+  mutate(`date founded` = case_when(
+    company == "Moss Inc." ~ 1991, 
+    company == "LS Solutions" ~ 1973, 
+    str_detect(company, "Amerishield") ~ 2021, 
+    company == "Safeware, Inc" ~ 1979, 
+    company == "UNISOURCES GROUP" ~ 1998,
+    company == "Family Face Mask" ~ 2021, 
+    company == "2253 Apparel Inc." ~ 2004, 
+    company == "Good Hygiene Brands" ~ 2008, 
+    company == "CBD American Shaman of SW Arlington" ~ 2014, 
+    company == "NAECO" ~ 2018, 
+    company == "Telepathic Graphics" ~ 2004, 
+    company == "Raybestos Powertrain" ~ 1999, 
+    company == "Naturally Pure Sanitizer" ~ 2016, 
+    company == "RED Company" ~ 2006, 
+    company == "prepared." ~ 2020,
+    company == "Tuff Zone, LLC" ~ 2013, 
+    company == "Ekomed Medical Technology", 2020, 
+    company == "Med 101 Store.com" ~ 2014, 
+    company == "Alibilextech Disinfectant" ~ 2018, 
+    company == "Shengquan USA, Inc." ~ 1979, 
+    company == "Zehrs Super Store" ~ 1979, 
+    company == "TriMark Masks" ~ 1998, 
+    TRUE ~ `date founded`))
+```
+
+
+```{r}
+final_sample <- readRDS(box_here("final_sample.RDS")) %>% 
+  mutate(corp_category = case_when(
+    `date founded` < 2020 ~ "Diversifying", 
+    `date founded` >= 2020 ~ "De_Novo")) %>% 
+  mutate(corp_category = case_when(
+    fda_incumbent == 1 | niosh_incumbent == 1 ~ "Incumbent", 
+    is.na(`date founded`) ~ "Unknown",
+    TRUE ~ corp_category))
+```
+
+
+
+
+# Hypothesis for Firm Entry
+
+## Firm Discrete Choice
+
+Our first set of models considers the probability that a firm that claims to be participating in a given market at time (t) actually establishes a US domestic manufacturing facility. Our hypothesis for the predictors of firm entry are mostly derived from the literature, where we believe that firms with relevant experience (in medical textiles, non-wovens, with an ISO certified facility, prior medical device experience, prior respirator/mask approval), that have access to resources (as represented by annual sales), that are part of multi-business units (as a proxy for access to additional resources and capabilities, and especially when manufacturing and distribution experience exists across a corporate network), will be more likely to either enter as de novo firms, or diversify into product markets experiencing shortages. 
+
+```{r}
+int_prod <- c("No Latex Elastic", "Non-Woven Fabric")
+```
+
+## Preliminary Statistics
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+We see that the proportion of participating firms that are actual US manufacturers varies substantially between the three final products that are produced, with a total sample of 174 (not including non-woven manufacturers) confirmed manufactures, out of a total of 368 manufacturers that listed as supplying a standard FDA-grade surgical mask/respirator, representing a roughly 47% success rate. 
+
+Restricting our sample to only firms that list on Thomasnet, our sample shrinks somewhat, to a total of 116 confirmed manufacturers, out of a total of 310 firms, representing a roughly 37% success rate. 
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+We see that the proportion of companies that stand up US manufacturing sites drops slightly for companies that supply only masks or only respirators, but stays roughly the same for companies that supply respirators and masks. However, if we restrict our sample to firms that do not list on Thomasnet, we see we no firms that do not enter into mask/respirator manufacturing. Thus, to test any hypothesis about the proportion of firms claiming to participate in a market that actually enter into production must focus exclusively on the Thomasnet sample only. 
+
+
+```{r}
+final_sample %>%
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, is.na(thomasnet)) %>% count() %>% 
+    mutate(dom_useful_num = case_when(
+        dom_useful_num == 0 ~ "Non US Manufacturer", 
+        dom_useful_num == 1 ~ "US Manufacturer"
+    )) %>% 
+    pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) 
+```
+
+
+Removing incumbents from this sample, reduces our sample size to 105/299, or a 35% success rate. 
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1, is.na(niosh_incumbent), is.na(fda_incumbent)) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+## Outcome Measures and Descriptive Statistics 
+
+Using the above samples, we now turn to measuring three different types of outcomes, or dependent variables:  
+
+1. # and/or % of entering firms
+2. # and/or % of firms who obtain regulatory approval 
+
+and as a final potential measure: 
+
+3. Date list on Thomasnet. 
+
+In general, we will focus on the first two of these outcome variables, though where possible, we will try and test the third as well. 
+
+The independent variables we test these against will be divided into two categories: 
+A) Firm Characteristics 
+  - Entrant Category
+  - Firm Size (categorical)
+  - Firm Corporate Network (1, greater than 1) 
+  - State
+B) Firm Descriptions
+  - ISO in description
+  - Distributor/Supplier in description
+  - Cleanroom in description
+  - ASTM/ANSI/AAMI in description
+  - "ply" in description
+  - "stock" in description 
+  
+As a potential other independent variable, we will consider "is listed on DB Hoovers." 
+
+We will provide descriptive statistics and ultimately test our models on both our full sample (including firms that do not list on Thomasnet), as well as on the sample
+
+### Firm Characteristics Descriptive Statistics
+
+```{r}
+sample_stats <- final_sample %>% 
+  filter(!specific_product %in% int_prod) 
+```
+
+```{r}
+sample_tn <- final_sample %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1)
+```
+
+
+```{r}
+dom_count <- function(data) {
+  data %>% 
+    count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>%
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n), values_fill = 0) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2)) 
+}
+```
+
+
+```{r}
+sample_summary <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  dom_count() 
+  
+```
+
+```{r}
+sample_graph <- sample_summary %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(specific_product, prop_manf), y = prop_manf, fill = specific_product), position = "dodge", color = "black", alpha = 0.8) + 
+  geom_label(aes(x = reorder(specific_product, prop_manf), y = -.05, label = `Non US Manufacturer`+`US Manufacturer`), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  geom_label(aes(reorder(specific_product, prop_manf), y = prop_manf, fill = specific_product, label = `US Manufacturer`)) + 
+  scale_fill_brewer(palette = "Set2") + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Proportion of Suppliers that Manufacture", x = "", fill = "")
+
+sample_graph
+```
+
+
+We now examine our second dependent variable, % of firms that obtain regulatory approval. Interestingly, we have 4 companies that obtain regulatory approval, but do not have US located manufacturing facilities. 
+
+```{r}
+reg_fil <- function(data) {
+  data %>% 
+     mutate(reg_appr = case_when(
+    niosh_counter == TRUE | fda_counter == TRUE ~ 1, 
+    TRUE ~ 0)) %>% 
+  filter(reg_appr == 1, dom_useful_num == 1)
+}
+```
+
+```{r}
+reg_count <- function(data, join_data) { 
+  data %>% 
+    count() %>% 
+  left_join(join_data, .) %>% 
+  ungroup() %>% 
+  mutate(n = case_when(
+    is.na(n) ~ as.integer(0), 
+    !is.na(n) ~ n
+  )) %>% 
+  mutate(prop_reg = case_when(
+    n != 0 ~ round(n/`US Manufacturer`, 2), 
+    n == 0 ~ 0 ))
+    }
+```
+
+```{r}
+sample_summary_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(specific_product) %>% 
+  reg_count(sample_summary)
+```
+```{r}
+sample_graph_reg <- sample_graph + 
+  geom_col(data = sample_summary_reg, aes(x = reorder(specific_product, prop_manf), y = n/(`Non US Manufacturer` + `US Manufacturer`)), color = "black", fill = "lavender", alpha = 0.7) + 
+  geom_label(data = sample_summary_reg, aes(x = reorder(specific_product, prop_manf), y = n/(`Non US Manufacturer` + `US Manufacturer`), label = n), color = "black", fill = "lavender")  
+
+sample_graph_reg 
+```
+
+
+
+#### Entry Type
+
+We start with the first dependendent variable, percent of listed firms that stand up a manufacturing facility. 
+
+```{r}
+entry_type <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, corp_category) %>% 
+  dom_count()
+```
+
+```{r}
+entry_count <- entry_type %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(corp_category, prop_manf), y = -3, fill = specific_product, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  scale_fill_brewer(palette = "Set2") + 
+  guides(label = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Companies", x = "", fill = "")
+
+entry_count
+```
+
+
+
+
+```{r}
+entry_type_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(specific_product, corp_category) %>% 
+  reg_count(entry_type)
+```
+```{r}
+reg_labs <- labs(fill = "", y = "Proportion of Firms that get Regulatory Approval", x = "Proportion of Firms that Manufacture")
+```
+
+
+```{r}
+entry_reg <- entry_type_reg  %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = corp_category), size = 8, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs
+
+entry_reg
+```
+
+
+We see that not all incumbents obtain a new regulatory approval, and that percent of incumbents that do obtain a new regulatory approval is highest for manufacturers of respirators only. While De Novo firms appear to have a higher portion of suppliers that stand up a manufacturing plant, diversifying firms are more likely to obtain regulatory approval. 
+
+
+#### Firm Size (categorical)
+
+Again we start with our first dependent variable, proportion of suppliers that stand up a manufacturing plant. 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn()
+```
+
+```{r}
+firm_size_df <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, firm_size, size_pos) %>% 
+  dom_count()
+```
+
+
+```{r}
+size_col <- c(brewer.pal(9, "Blues")[9], brewer.pal(9, "Blues")[7], brewer.pal(9, "Blues")[6], brewer.pal(9, "Blues")[4], brewer.pal(9, "Blues")[3], "White")
+```
+
+```{r}
+size_count <- firm_size_df %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(firm_size, size_pos), y = `Non US Manufacturer`+`US Manufacturer`, fill = reorder(firm_size, size_pos)), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = reorder(firm_size, size_pos), y = `US Manufacturer`, fill = reorder(firm_size, size_pos)), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(firm_size, size_pos), y = 20, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  scale_fill_manual(values = size_col) + 
+  guides(fill = FALSE) + 
+  facet_wrap(~specific_product) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "Firm Annual Sales", y = "Companies")
+
+size_count
+```
+
+```{r}
+firm_size_sum <- firm_size_df %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(firm_size, prop_manf), y = prop_manf, fill = reorder(firm_size, size_pos)), alpha = 0.6, position = "dodge", color = "black") + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = size_col) + 
+  guides(fill = FALSE) + 
+  facet_wrap(~specific_product) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "Firm Annual Sales", y = "Companies")
+
+firm_size_sum_lab <- firm_size_sum + 
+  geom_text(aes(x = reorder(firm_size, size_pos), y = prop_manf + 0.1, label = `US Manufacturer` + `Non US Manufacturer`), color = "Black", position = position_dodge(width = 1)) 
+
+firm_size_sum_lab
+```
+
+
+We now examine our second dependent variable, % of firms that obtain regulatory approval.
+
+```{r}
+firm_size_reg <- sample_tn %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn() %>% 
+  reg_fil() %>% 
+  group_by(specific_product, firm_size) %>% 
+  reg_count(firm_size_df)
+```
+
+```{r}
+size_reg <- firm_size_reg  %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = reorder(firm_size, size_pos)), size = 7, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = size_col) + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs
+
+size_reg
+```
+
+
+```{r}
+firm_size_sum_reg <- firm_size_sum + 
+  geom_col(data = firm_size_reg, aes(x = reorder(firm_size, prop_manf), y = n/(`US Manufacturer` + `Non US Manufacturer`), fill = reorder(firm_size, size_pos)), alpha = 0.6, position = "dodge", color = "light grey") + 
+  geom_label(data = firm_size_reg, aes(reorder(firm_size, prop_manf), y = n/(`US Manufacturer` + `Non US Manufacturer`) + 0.1, group = specific_product, label = n, fill = reorder(firm_size, size_pos)), position = position_dodge(width = 1))
+
+firm_size_sum_reg
+```
+
+
+####  Firm Corporate Network (1, greater than 1) 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(corporate_family_dbh = case_when(
+    !is.na(DUNS) & is.na(corporate_family_dbh) ~ 1, 
+    TRUE ~ corporate_family_dbh
+  )) %>% 
+  mutate(corp_network = case_when(
+    corporate_family_dbh == 1 ~ "Independent", 
+    corporate_family_dbh != 1 ~ "Networked", 
+    is.na(corporate_family_dbh) ~ "Unknown"
+  )) 
+```
+
+```{r}
+corp_net <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, corp_network) %>% 
+  dom_count()
+```
+
+```{r}
+corp_count <- corp_net %>% 
+  ggplot() +
+  geom_col(aes(x = corp_network, y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = corp_network, y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = corp_network, y = -3, label = paste0(prop_manf*100, "%"), fill = specific_product), color = "Black", position = position_dodge(width = 1)) + 
+  scale_fill_brewer(palette = "Set2") + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(fill = "", y = "Companies", x = "Corporate Network")
+
+corp_count
+```
+
+```{r}
+corp_net_sum <- corp_net %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(corp_network, prop_manf), y = prop_manf, fill = specific_product), position = "dodge", color = "black", alpha = 0.6) + 
+  geom_text(aes(x = reorder(corp_network, prop_manf), y = -.05, label = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  scale_fill_brewer(palette = "Set2") + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Proportion of Suppliers that Manufacture", x = "", fill = "")
+
+corp_net_sum_lab <- corp_net_sum + 
+   geom_label(aes(reorder(corp_network, prop_manf), y = prop_manf, fill = specific_product, label = paste(100*prop_manf, "%")), position = position_dodge(width = 1)) 
+
+corp_net_sum_lab
+```
+
+
+We now turn to our other dependent variables. 
+
+```{r}
+corp_net_reg <- sample_tn %>% 
+  mutate(corporate_family_dbh = case_when(
+    !is.na(DUNS) & is.na(corporate_family_dbh) ~ 1, 
+    TRUE ~ corporate_family_dbh
+  )) %>% 
+  mutate(corp_network = case_when(
+    corporate_family_dbh == 1 ~ "Independent", 
+    corporate_family_dbh != 1 ~ "Networked", 
+    is.na(corporate_family_dbh) ~ "Unknown"
+  )) %>% 
+  reg_fil() %>% 
+  group_by(specific_product, corp_network) %>% 
+  reg_count(corp_net)
+```
+
+```{r}
+corp_reg <- corp_net_reg %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = corp_network), size = 7, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs 
+
+corp_reg
+```
+
+```{r}
+corp_net_sum_reg <- corp_net_sum + 
+   geom_col(data = corp_net_reg, aes(x = reorder(corp_network, prop_manf), y = n/(`US Manufacturer` + `Non US Manufacturer`), fill = specific_product), position = "dodge", color = "black") +
+  geom_label(data = corp_net_reg, aes(reorder(corp_network, prop_manf), y = n/(`US Manufacturer` + `Non US Manufacturer`), fill = specific_product, label = n), position = position_dodge(width = 1))
+
+corp_net_sum_reg
+```
+
+
+#### Spin-Offs
+
+Merging information about date founded and corporate network, we can further differentiate entry type to specificy corporate spin-offs. As a note, this representation will not capture all firms that in some way, "spin-off". 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(
+  spin_off = case_when(
+    (corp_category == "De_Novo" | `date founded` >= 2020) & corporate_family_dbh != 1 ~ "Spin-Off", 
+  TRUE ~ "Not-Spin-Off")) %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn()
+```
+
+
+```{r}
+sample_tn %>% 
+  mutate(corp_category = case_when(
+    (corp_category == "De_Novo" | `date founded` >= 2020) & corporate_family_dbh != 1 ~ "Spin_Off", 
+    TRUE ~ corp_category
+  )) %>% 
+  group_by(dom_useful_num, specific_product, corp_category) %>%
+  dom_count() %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(corp_category, prop_manf), y = -3, fill = specific_product, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  scale_fill_brewer(palette = "Set2") + 
+  guides(label = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Companies", x = "", fill = "")
+```
+
+
+
+####  State
+
+
+
+
+```{r}
+state_df <- sample_tn %>% 
+  group_by(dom_useful_num, state_abbr) %>% 
+  filter(state_abbr != "ON") %>% 
+  dom_count()
+```
+
+```{r}
+state_count <- state_df %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `US Manufacturer`), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(state_abbr, prop_manf), y = -3, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "", y = "Companies")
+
+state_count
+```
+
+
+```{r}
+state_sum <- state_df %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = prop_manf), position = "dodge", color = "black", fill = "light grey") + 
+  scale_fill_brewer(palette = "Set2") + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Proportion of Suppliers that Manufacture", x = "", fill = "")
+
+state_sum_lab <- state_sum + 
+  geom_text(aes(x = reorder(state_abbr, prop_manf), y = prop_manf + 0.1, label = `Non US Manufacturer`+`US Manufacturer`), color = "Black", show.legend = FALSE) 
+  
+```
+
+
+
+```{r}
+state_count_dot <- state_df %>% 
+  ggplot() + 
+  geom_jitter(aes(`Non US Manufacturer`+`US Manufacturer`, y = prop_manf, fill = state_abbr), shape = 21) + 
+  geom_text_repel(aes(`Non US Manufacturer`+`US Manufacturer`, y = prop_manf, fill = state_abbr, label = state_abbr)) + 
+  guides(fill = FALSE) + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "Total Companies", y = "Proportion of Companies that Manufacture")
+
+state_count_dot
+```
+```{r}
+state_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(state_abbr) %>% 
+  reg_count(state_df)
+```
+
+```{r}
+state_reg_graph1 <- state_reg %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge", fill = "Light Grey") +
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = `US Manufacturer`), alpha = 0.75, position = "dodge", fill = "Black") + 
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = n), position = "dodge", fill = "Purple") + 
+  geom_text(aes(x = reorder(state_abbr, prop_reg), y = -3, label = paste0(prop_reg*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "", y = "Companies")
+
+state_reg_graph1
+```
+
+```{r}
+state_sum_reg <- state_sum + 
+  geom_col(data = state_reg, aes(x = reorder(state_abbr, prop_manf), y = n/(`US Manufacturer` + `Non US Manufacturer`)), fill = "purple") 
+
+state_sum_reg
+```
+
+
+```{r}
+state_reg_graph <- state_reg %>% 
+  ggplot() + 
+  geom_jitter(shape = 21, aes(x = prop_manf, prop_reg, fill = state_abbr), size = 7, alpha = 0.8) + 
+  geom_text_repel(aes(x = prop_manf, prop_reg, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = FALSE) + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs 
+
+state_reg_graph
+```
+
+
+```{r}
+state_df %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `US Manufacturer`), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(state_abbr, prop_manf), y = 20, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1))  + coord_flip()
+```
+
+## Testing Firm Choice Models 
+
+We now summarize insights from the above data summaries, highlighting heterogeneity around: product supplied, company size, company network, entry category, and state identified in. 
+
+We note that slicing the data to a certain degree of precision (e.g product supplied and corporate network, with the specification of spin-offs), produces some perfect predictors. In addition, it appears that preliminary patterns of firm entry across the above discussed dimensions are not consistent across the two dependent variable measures above: 1) proportion of suppliers that manufacturer, and 2) proportion of manufacturers that get regulatory approval. 
+
+As such, we will test the following models: a Linear Probability Model (LPM), a logit model, and probit model. For each category of models, $Y_i$ will first be 1 if firm $i$ manufacturers, and 0 otherwise. 
+
+$$ Y_i = B_0 + B_1 size_i + B_2 network + \epsilon_i$$ 
+
+We will then consider adding three other types of differentiators: A) Supplying 1 product, or 2 products, B) Specific Product Supplied, C) De Novo or Diversifying Firm
+
+We will then conclude with seeing how the addition of state effects changes any of the results.
+
+Because all incumbent firms enter, we will remove them from the sample. They may be added in later. 
+
+```{r}
+final_data <- sample_tn %>% 
+  filter(corp_category != "Incumbent")
+```
+
+```{r}
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(jtools)
+```
+
+### LPM 
+
+```{r}
+set_summ_defaults(digits = 2, robust = "HC3")
+```
+
+#### Model 1
+```{r}
+ols_model_1 <-  lm(dom_useful_num ~ firm_size, data = final_data)
+```
+
+```{r}
+summ(ols_model_1)
+```
+
+#### Model 2
+
+
+```{r}
+ols_model_2 <-  lm(dom_useful_num ~ firm_size + corp_network, data = final_data)
+```
+
+```{r}
+summ(ols_model_2)
+```
+
+```{r}
+export_summs(ols_model_1, ols_model_2, scale = TRUE)
+```
+#### Model 3 
+
+```{r}
+library(lfe)
+```
+
+
+```{r}
+ols_model_3_fe <- felm(dom_useful_num ~ firm_size + corp_network | specific_product | 0 | specific_product, data = final_data)
+```
+
+```{r}
+summary(ols_model_3_fe)
+```
+
+
+```{r}
+ols_model_3 <-  lm(dom_useful_num ~ firm_size + corp_network + specific_product, data = final_data)
+```
+
+
+
+```{r}
+export_summs(ols_model_1, ols_model_2, ols_model_3)
+```
+#### Model 4
+
+
+```{r}
+ols_model_4_fe <- felm(dom_useful_num ~ firm_size + corp_network | corp_category | 0 | corp_category, data = final_data)
+```
+
+```{r}
+summary(ols_model_4_fe)
+```
+
+
+```{r}
+ols_model_4 <-  lm(dom_useful_num ~ firm_size + corp_network + corp_category, data = final_data)
+```
+
+```{r}
+summary(felm(dom_useful_num ~ corp_network + corp_category |  specific_product | 0 | corp_category, data = final_data))
+```
+
+```{r}
+export_summs(lm(dom_useful_num ~ corp_category + corp_network, data = final_data), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data), model.names = c("Model 4", "Model 5", "Model 6"))
+```
+```{r}
+final_data_nm <- final_data %>% 
+  filter(firm_size != "Missing", corp_network != "Unknown")
+```
+
+
+```{r}
+final_data_duns <- final_data %>% 
+  mutate(duns_test = !is.na(DUNS))
+```
+
+### Summary Plots of Above
+
+```{r}
+plot_all <- plot_summs(ols_model_1, ols_model_2, ols_model_3,lm(dom_useful_num ~ corp_category + corp_network, data = final_data), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data), omit.coefs = NULL)
+```
+
+```{r}
+plot_all_nm <- plot_summs(lm(dom_useful_num ~ firm_size, data = final_data_nm),  lm(dom_useful_num ~ firm_size + corp_network + corp_category, data = final_data_nm), lm(dom_useful_num ~ firm_size + corp_network + specific_product, data = final_data_nm), lm(dom_useful_num ~ corp_category + corp_network, data = final_data_nm), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data_nm), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data_nm), omit.coefs = NULL)
+```
+
+
+```{r}
+library(patchwork)
+```
+
+```{r}
+comp_plot <- plot_all / plot_all_nm
+
+comp_plot 
+```
+
+
+```{r}
+export_summs(lm(dom_useful_num ~ firm_size + corp_network, data = final_data_nm), lm(dom_useful_num ~ corp_network + corp_category, data = final_data_nm), lm(dom_useful_num ~ corp_network + spin_off, data = final_data_nm), lm(dom_useful_num ~ firm_size + corp_network + spin_off, data = final_data_nm),  robust = TRUE)
+```
+
+```{r}
+final_de_novos <- sample_tn %>% filter(`date founded` > 2020 | is.na(`date founded`))
+```
+
+
+```{r}
+ols_model_6 <- lm(dom_useful_num ~ firm_size + corp_network, data = sample_tn %>% filter(`date founded` > 2020 | is.na(`date founded`)))
+```
+
+```{r}
+summary(ols_model_6)
+```
+
+```{r results = 'asis'}
+stargazer(ols_model_1, se = robust.se, type = "html")
+```
+
+### Probit Model 
+
+--> because of low probability of success and extreme sensitivity to different types of slicing, doesn't seem like it makes sense to do a probit model. 
+--> conclusions from the first: missing data extremely highly coorelated with not entering into manufacturing, high sensitivity to different types of slices (especially by product and company entry category)
+
+```{r}
+probit_1 <- glm(dom_useful_num ~ corp_network + corp_category, family = binomial(link = "probit"), data = final_data)
+```
+
+```{r}
+probit_2 <- glm(dom_useful_num ~ corp_network  + firm_size, family = binomial(link = "probit"), data = final_data)
+```
+```{r}
+summ(probit_2)
+```
+
+### Firm Descriptions
+
+Q: Is it worth it do a keyword search, or should we just train/use a language model? 
+H: The earlier data points have the information that we need, but are difficult to get. Instead, use ML on supplier descriptions to approximate size, capabilities, and corporate network. 
+
+We note that the above models do not seem particularly accurate or powerful in terms of predicting which firms enter a market after a demand shock and supply shortage. Above all, the intercept parameter is extremely sensitive to the combination of other variables included, suggesting that changing which term(s) are dropped may allow for a slightly better specification of the model, with less "weight" placed on the intercept, and more on individual firm attributes. Additional future work will also require testing the predictive power of the constructed model. 
+
+The "best" model from above controls for corporate network size, company entrant category, and supplier listing (product). In this model, variation in company network and company entrant likely captures the variation from firm size used in the other models. 
+
+We now see if we can add additional detail by using information provided in supplier listings. We focus on five categories (ISO certification, self-listed distributor, self-listed supplier, list an ASTM/AAMI/ANSI standard, and carry "stock"), and after preliminary testing drop ISO and supplier. 
+
+
+```{r}
+supplier_desc <- sample_tn %>% 
+  filter(corp_category != "Incumbent") %>% 
+  mutate(ISO_CERT = str_detect(desc, "ISO "), 
+         distributor = str_detect(desc, fixed("distributor", ignore_case = TRUE)), 
+         supplier = str_detect(desc, fixed("supplier", ignore_case = TRUE)), 
+         certification = str_detect(desc, "ASTM|ANSI|AAMI"), 
+         stock = str_detect(desc, fixed("stock", ignore_case = TRUE)))
+```
+
+```{r}
+desc_model_1 <- lm(dom_useful_num ~  distributor + certification + stock, data = supplier_desc)
+```
+
+```{r}
+desc_model_2 <- lm(dom_useful_num ~  distributor + certification + stock + specific_product, data = supplier_desc)
+```
+
+```{r}
+export_summs(desc_model_1, desc_model_2, lm(dom_useful_num ~  distributor + certification + stock + corp_category + corp_network + firm_size + specific_product, data = supplier_desc))
+```
+We see that a model that adds components of firm supplier listings performs slightly better than the other models without these data do, but still suffers from the same type and category of problems as the earlier models did. Again, changing the model specification to drop different categorical variables when constructing the model will likely have a significant impact on the model's interpretability. 
+
+# Moving to states
+
+
+In addition to these firm-level characteristics, we believe that the firm level decision will be influenced by the availability of regional resources to support firm entry, representing the health of the regional manufacturing ecosystem it is a part of, as captured by county or state regional controls (number of total manufacturers, ratio of large to small manufacturers, ratio of business starts to stops). 
+
+Our total number of confirmed domestic manufacturers is divided across 36 states. There are many ways to unpack the role of state ecosystems in supporting firm entry into critical product areas. Since our earlier work establishes a strong, endogenous role of state manufacturing capacity in supporting the pandemic response, it is important to control for historical trends in manufacturing. To do so, we will bring in QCEW, and Business Dynamics Statitstics (BDS) data to identify manufacturing trends. 
+
+We then plan on pairing these data with 1) Argonne National Labs Economic Development Capacity Indicators, 2) NIST MEP client interactions, 3) EDA manufacturing grants, to try and better represent the composition, and potentially evolution, of manufacturing ecosystems. 
+
+## QCEW Data 
+
+### Descriptive Statistics
+
+We start by bringing in QCEW data and creating two simple variables: manufacturing share in 2017, and manufacturing size in 2017. This process will allow us to create functions to use in later QCEW work. 
+
+```{r}
+qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
+```
+
+```{r}
+qcew_prelim <- qcew_state %>% 
+  filter(year == 2017, industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+```{r}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+```{r}
+qcew_states <- area_codes %>% 
+  left_join(states) %>% 
+  left_join(qcew_prelim, .)
+```
+
+```{r}
+hist(qcew_states$estabs)
+```
+
+
+```{r}
+hist(qcew_states$manf_share)
+
+```
+
+
+```{r}
+qcew_states %>% 
+ggplot()+ 
+  geom_point(aes(x = estabs, y = manf_share, group = state_abbr)) + 
+  labs(x = "Manufacturing Establishments", y = "Manufacturing Share of all Establishments") + 
+  theme_bw() + 
+  axis_theme
+```
+
+We now merge our QCEW variable with our dataset on firm entry. 
+
+```{r}
+ecosystem_entry <- sample_tn %>% 
+  left_join(qcew_states)
+```
+We now can create some simple plots. 
+
+First, we examine the relationship between the size of manufacturing in a state and the number of suppliers listing on Thomasnet. 
+
+```{r}
+state_entry <- sample_tn %>% 
+  group_by(dom_useful_num, state_abbr) %>% 
+  dom_count() %>% 
+  mutate(total_suppliers = `US Manufacturer` + `Non US Manufacturer`) %>% 
+  left_join(qcew_states) %>% 
+  filter(state_abbr != "ON")
+```
+
+```{r}
+state_suppliers_size <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = estabs, y = total_suppliers, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Establishments by State, 2017", y = "Total Supplier Listings, \nby listed State") + 
+  theme_bw() + 
+  axis_theme
+
+state_suppliers_size
+```
+
+```{r}
+suppliers_label <- state_suppliers_size + 
+   geom_text_repel(aes(x = estabs, y = total_suppliers, group = state_abbr, label = state_abbr))
+```
+
+
+```{r}
+state_suppliers_share <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = total_suppliers, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Total Supplier Listings, \nby listed State") + 
+  theme_bw() + 
+  axis_theme
+
+state_suppliers_share
+```
+
+```{r}
+share_label <- state_suppliers_share + 
+  geom_text_repel(aes(x = manf_share, y = total_suppliers, group = state_abbr, label = state_abbr))
+```
+We now want to compare these patterns against the total number, and proportion of suppliers that set up US manufacturing capacity. For now, we will focus on using the manufacturing share of the economy in 2017 in our descriptive statistics. 
+
+
+```{r}
+manf_states <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = `US Manufacturer`, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Confirmed Manufacturing Entrants, by State") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+manf_states_label <- manf_states + 
+  geom_text_repel(aes(x = manf_share, y = `US Manufacturer`, group = state_abbr, label = state_abbr)) 
+```
+
+
+We can now investigate the proportion of suppliers that manufacturer. 
+
+```{r}
+manf_share <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = prop_manf, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Proportion of Suppliers that Manufacturer, by State") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+manf_share_label <- manf_share + 
+  geom_text_repel(aes(x = manf_share, y = prop_manf, group = state_abbr, label = state_abbr)) 
+```
+
+We now look at regulatory approval rates. 
+
+```{r}
+state_entry_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(state_abbr) %>% 
+  reg_count(state_entry) %>% 
+  rename(reg_n = n)
+```
+
+```{r}
+state_entry_reg %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = prop_manf, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8) + 
+  geom_count(aes(x = manf_share, y = prop_reg, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8, color = "Purple") + 
+  geom_segment(aes(x = manf_share, xend = manf_share, y = prop_manf, yend = prop_reg, group = state_abbr), alpha = 0.8) + 
+  geom_text_repel(aes(x = manf_share, y = prop_manf, group = state_abbr, label = state_abbr)) +
+  theme_bw() + 
+  axis_theme
+```
+
+
+We now work towards constructing our models.
+
+
+```{r}
+state_entry %>% 
+  left_join(qcew_states, .) %>% 
+  mutate(year = 2017) %>% 
+  mutate(`Non US Manufacturer` = case_when(
+    is.na(`Non US Manufacturer`) ~ 0, 
+    TRUE ~ 1*`Non US Manufacturer`))---
+title: "firm_entry"
+author: "Nikhil Kalathil"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document takes the cleaned final sample and provides descriptive statistics and preliminary regression results for a variety of firm entry hypotheses. 
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+
+```{r}
+
+box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+```{r}
+firm_size_fn <- function(data){
+  data %>% 
+    mutate(firm_size = case_when(
+      sales_dbh < 1000000 ~ "Under $1 Mil", 
+      sales_dbh >= 1000000 & sales_dbh < 10000000 ~ "$1M-$10M", 
+      sales_dbh >= 10000000 & sales_dbh < 50000000 ~ "$10M-$50M", 
+      sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ "$50M-$1B", 
+      sales_dbh >= 1000000000 ~ "$1B + ", 
+      is.na(sales_dbh) ~ "Missing"
+    ), 
+    size_pos = case_when(
+      sales_dbh < 1000000 ~ 5, 
+      sales_dbh >= 1000000 & sales_dbh < 10000000 ~ 4, 
+      sales_dbh >= 10000000 & sales_dbh < 50000000 ~ 3, 
+      sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ 2, 
+      sales_dbh >= 1000000000 ~ 1, 
+      is.na(sales_dbh) ~ 6
+    ))
+}
+```
+
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 18))
+```
+
+
+# Import Sample
+
+```{r, eval = FALSE}
+final_sample <- final_sample %>% 
+  mutate(`date founded` = case_when(
+    company == "Moss Inc." ~ 1991, 
+    company == "LS Solutions" ~ 1973, 
+    str_detect(company, "Amerishield") ~ 2021, 
+    company == "Safeware, Inc" ~ 1979, 
+    company == "UNISOURCES GROUP" ~ 1998,
+    company == "Family Face Mask" ~ 2021, 
+    company == "2253 Apparel Inc." ~ 2004, 
+    company == "Good Hygiene Brands" ~ 2008, 
+    company == "CBD American Shaman of SW Arlington" ~ 2014, 
+    company == "NAECO" ~ 2018, 
+    company == "Telepathic Graphics" ~ 2004, 
+    company == "Raybestos Powertrain" ~ 1999, 
+    company == "Naturally Pure Sanitizer" ~ 2016, 
+    company == "RED Company" ~ 2006, 
+    company == "prepared." ~ 2020,
+    company == "Tuff Zone, LLC" ~ 2013, 
+    company == "Ekomed Medical Technology", 2020, 
+    company == "Med 101 Store.com" ~ 2014, 
+    company == "Alibilextech Disinfectant" ~ 2018, 
+    company == "Shengquan USA, Inc." ~ 1979, 
+    company == "Zehrs Super Store" ~ 1979, 
+    company == "TriMark Masks" ~ 1998, 
+    TRUE ~ `date founded`))
+```
+
+
+```{r}
+final_sample <- readRDS(box_here("final_sample.RDS")) %>% 
+  mutate(corp_category = case_when(
+    `date founded` < 2020 ~ "Diversifying", 
+    `date founded` >= 2020 ~ "De_Novo")) %>% 
+  mutate(corp_category = case_when(
+    fda_incumbent == 1 | niosh_incumbent == 1 ~ "Incumbent", 
+    is.na(`date founded`) ~ "Unknown",
+    TRUE ~ corp_category))
+```
+
+
+
+
+# Hypothesis for Firm Entry
+
+## Firm Discrete Choice
+
+Our first set of models considers the probability that a firm that claims to be participating in a given market at time (t) actually establishes a US domestic manufacturing facility. Our hypothesis for the predictors of firm entry are mostly derived from the literature, where we believe that firms with relevant experience (in medical textiles, non-wovens, with an ISO certified facility, prior medical device experience, prior respirator/mask approval), that have access to resources (as represented by annual sales), that are part of multi-business units (as a proxy for access to additional resources and capabilities, and especially when manufacturing and distribution experience exists across a corporate network), will be more likely to either enter as de novo firms, or diversify into product markets experiencing shortages. 
+
+```{r}
+int_prod <- c("No Latex Elastic", "Non-Woven Fabric")
+```
+
+## Preliminary Statistics
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+We see that the proportion of participating firms that are actual US manufacturers varies substantially between the three final products that are produced, with a total sample of 174 (not including non-woven manufacturers) confirmed manufactures, out of a total of 368 manufacturers that listed as supplying a standard FDA-grade surgical mask/respirator, representing a roughly 47% success rate. 
+
+Restricting our sample to only firms that list on Thomasnet, our sample shrinks somewhat, to a total of 116 confirmed manufacturers, out of a total of 310 firms, representing a roughly 37% success rate. 
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+We see that the proportion of companies that stand up US manufacturing sites drops slightly for companies that supply only masks or only respirators, but stays roughly the same for companies that supply respirators and masks. However, if we restrict our sample to firms that do not list on Thomasnet, we see we no firms that do not enter into mask/respirator manufacturing. Thus, to test any hypothesis about the proportion of firms claiming to participate in a market that actually enter into production must focus exclusively on the Thomasnet sample only. 
+
+
+```{r}
+final_sample %>%
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, is.na(thomasnet)) %>% count() %>% 
+    mutate(dom_useful_num = case_when(
+        dom_useful_num == 0 ~ "Non US Manufacturer", 
+        dom_useful_num == 1 ~ "US Manufacturer"
+    )) %>% 
+    pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) 
+```
+
+
+Removing incumbents from this sample, reduces our sample size to 105/299, or a 35% success rate. 
+
+```{r}
+final_sample %>% 
+  group_by(dom_useful_num, specific_product) %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1, is.na(niosh_incumbent), is.na(fda_incumbent)) %>% 
+  count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>% 
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n)) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2))
+```
+
+## Outcome Measures and Descriptive Statistics 
+
+Using the above samples, we now turn to measuring three different types of outcomes, or dependent variables:  
+
+1. # and/or % of entering firms
+2. # and/or % of firms who obtain regulatory approval 
+
+and as a final potential measure: 
+
+3. Date list on Thomasnet. 
+
+In general, we will focus on the first two of these outcome variables, though where possible, we will try and test the third as well. 
+
+The independent variables we test these against will be divided into two categories: 
+A) Firm Characteristics 
+  - Entrant Category
+  - Firm Size (categorical)
+  - Firm Corporate Network (1, greater than 1) 
+  - State
+B) Firm Descriptions
+  - ISO in description
+  - Distributor/Supplier in description
+  - Cleanroom in description
+  - ASTM/ANSI/AAMI in description
+  - "ply" in description
+  - "stock" in description 
+  
+As a potential other independent variable, we will consider "is listed on DB Hoovers." 
+
+We will provide descriptive statistics and ultimately test our models on both our full sample (including firms that do not list on Thomasnet), as well as on the sample
+
+### Firm Characteristics Descriptive Statistics
+
+```{r}
+sample_stats <- final_sample %>% 
+  filter(!specific_product %in% int_prod) 
+```
+
+```{r}
+sample_tn <- final_sample %>% 
+  filter(!specific_product %in% int_prod, thomasnet == 1)
+```
+
+
+```{r}
+dom_count <- function(data) {
+  data %>% 
+    count() %>% 
+  mutate(dom_useful_num = case_when(
+    dom_useful_num == 0 ~ "Non US Manufacturer", 
+    dom_useful_num == 1 ~ "US Manufacturer"
+  )) %>%
+  pivot_wider(names_from = c(dom_useful_num), values_from = c(n), values_fill = 0) %>% 
+  mutate(prop_manf =  round(`US Manufacturer`/(`Non US Manufacturer`+`US Manufacturer`), 2)) 
+}
+```
+
+
+#### Entry Type
+
+We start with the first dependendent variable, percent of listed firms that stand up a manufacturing facility. 
+
+```{r}
+entry_type <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, corp_category) %>% 
+  dom_count()
+```
+
+```{r}
+entry_count <- entry_type %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(corp_category, prop_manf), y = -3, fill = specific_product, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  scale_fill_brewer(palette = "Set2") + 
+  guides(label = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Companies", x = "", fill = "")
+
+entry_count
+```
+
+We now examine our second dependent variable, % of firms that obtain regulatory approval. Interestingly, we have 4 companies that obtain regulatory approval, but do not have US located manufacturing facilities. 
+
+```{r}
+reg_fil <- function(data) {
+  data %>% 
+     mutate(reg_appr = case_when(
+    niosh_counter == TRUE | fda_counter == TRUE ~ 1, 
+    TRUE ~ 0)) %>% 
+  filter(reg_appr == 1, dom_useful_num == 1)
+}
+```
+
+```{r}
+reg_count <- function(data, join_data) { 
+  data %>% 
+    count() %>% 
+  left_join(join_data, .) %>% 
+  ungroup() %>% 
+  mutate(n = case_when(
+    is.na(n) ~ as.integer(0), 
+    !is.na(n) ~ n
+  )) %>% 
+  mutate(prop_reg = case_when(
+    n != 0 ~ round(n/`US Manufacturer`, 2), 
+    n == 0 ~ 0 ))
+    }
+```
+
+
+```{r}
+entry_type_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(specific_product, corp_category) %>% 
+  reg_count(entry_type) %>% 
+  view()
+```
+```{r}
+reg_labs <- labs(fill = "", y = "Proportion of Firms that get Regulatory Approval", x = "Proportion of Firms that Manufacture")
+```
+
+
+```{r}
+entry_reg <- entry_type_reg  %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = corp_category), size = 8, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs
+
+entry_reg
+```
+
+
+We see that not all incumbents obtain a new regulatory approval, and that percent of incumbents that do obtain a new regulatory approval is highest for manufacturers of respirators only. While De Novo firms appear to have a higher portion of suppliers that stand up a manufacturing plant, diversifying firms are more likely to obtain regulatory approval. 
+
+
+#### Firm Size (categorical)
+
+Again we start with our first dependent variable, proportion of suppliers that stand up a manufacturing plant. 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn()
+```
+
+```{r}
+firm_size_df <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, firm_size, size_pos) %>% 
+  dom_count()
+```
+
+
+```{r}
+size_col <- c(brewer.pal(9, "Blues")[9], brewer.pal(9, "Blues")[7], brewer.pal(9, "Blues")[6], brewer.pal(9, "Blues")[4], brewer.pal(9, "Blues")[3], "White")
+```
+
+```{r}
+size_count <- firm_size_df %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(firm_size, size_pos), y = `Non US Manufacturer`+`US Manufacturer`, fill = reorder(firm_size, size_pos)), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = reorder(firm_size, size_pos), y = `US Manufacturer`, fill = reorder(firm_size, size_pos)), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(firm_size, size_pos), y = 20, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  scale_fill_manual(values = size_col) + 
+  guides(fill = FALSE) + 
+  facet_wrap(~specific_product) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "Firm Annual Sales", y = "Companies")
+
+size_count
+```
+
+We now examine our second dependent variable, % of firms that obtain regulatory approval.
+
+```{r}
+firm_size_reg <- sample_tn %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn() %>% 
+  reg_fil() %>% 
+  group_by(specific_product, firm_size) %>% 
+  reg_count(firm_size_df)
+```
+
+```{r}
+size_reg <- firm_size_reg  %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = reorder(firm_size, size_pos)), size = 7, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = size_col) + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs
+
+size_reg
+```
+
+
+####  Firm Corporate Network (1, greater than 1) 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(corporate_family_dbh = case_when(
+    !is.na(DUNS) & is.na(corporate_family_dbh) ~ 1, 
+    TRUE ~ corporate_family_dbh
+  )) %>% 
+  mutate(corp_network = case_when(
+    corporate_family_dbh == 1 ~ "Independent", 
+    corporate_family_dbh != 1 ~ "Networked", 
+    is.na(corporate_family_dbh) ~ "Unknown"
+  )) 
+```
+
+```{r}
+corp_net <- sample_tn %>% 
+  group_by(dom_useful_num, specific_product, corp_network) %>% 
+  dom_count()
+```
+
+```{r}
+corp_count <- corp_net %>% 
+  ggplot() +
+  geom_col(aes(x = corp_network, y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = corp_network, y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = corp_network, y = -3, label = paste0(prop_manf*100, "%"), fill = specific_product), color = "Black", position = position_dodge(width = 1)) + 
+  scale_fill_brewer(palette = "Set2") + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(fill = "", y = "Companies", x = "Corporate Network")
+
+corp_count
+```
+
+We now turn to our other dependent variables. 
+
+```{r}
+corp_net_reg <- sample_tn %>% 
+  mutate(corporate_family_dbh = case_when(
+    !is.na(DUNS) & is.na(corporate_family_dbh) ~ 1, 
+    TRUE ~ corporate_family_dbh
+  )) %>% 
+  mutate(corp_network = case_when(
+    corporate_family_dbh == 1 ~ "Independent", 
+    corporate_family_dbh != 1 ~ "Networked", 
+    is.na(corporate_family_dbh) ~ "Unknown"
+  )) %>% 
+  reg_fil() %>% 
+  group_by(specific_product, corp_network) %>% 
+  reg_count(corp_net)
+```
+
+```{r}
+corp_reg <- corp_net_reg %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = prop_manf, prop_reg, fill = corp_network), size = 7, alpha = 0.8) + 
+  facet_wrap(~specific_product) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs 
+
+corp_reg
+```
+
+#### Spin-Offs
+
+Merging information about date founded and corporate network, we can further differentiate entry type to specificy corporate spin-offs. As a note, this representation will not capture all firms that in some way, "spin-off". 
+
+```{r}
+sample_tn <- sample_tn %>% 
+  mutate(
+  spin_off = case_when(
+    (corp_category == "De_Novo" | `date founded` >= 2020) & corporate_family_dbh != 1 ~ "Spin-Off", 
+  TRUE ~ "Not-Spin-Off")) %>% 
+  mutate(sales_dbh = as.numeric(str_trim(sales_dbh))) %>% 
+  firm_size_fn()
+```
+
+
+```{r}
+sample_tn %>% 
+  mutate(corp_category = case_when(
+    (corp_category == "De_Novo" | `date founded` >= 2020) & corporate_family_dbh != 1 ~ "Spin_Off", 
+    TRUE ~ corp_category
+  )) %>% 
+  group_by(dom_useful_num, specific_product, corp_category) %>%
+  dom_count() %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`, fill = specific_product), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(corp_category, prop_manf), y = `US Manufacturer`, fill = specific_product), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(corp_category, prop_manf), y = -3, fill = specific_product, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1), show.legend = FALSE) + 
+  scale_fill_brewer(palette = "Set2") + 
+  guides(label = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Companies", x = "", fill = "")
+```
+
+
+
+####  State
+
+
+
+
+```{r}
+state_df <- sample_tn %>% 
+  group_by(dom_useful_num, state_abbr) %>% 
+  dom_count()
+```
+
+```{r}
+state_count <- state_df %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge", color = "Light Grey") + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `US Manufacturer`), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(state_abbr, prop_manf), y = -3, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "", y = "Companies")
+
+state_count
+```
+
+
+
+```{r}
+state_count_dot <- state_df %>% 
+  ggplot() + 
+  geom_jitter(aes(`Non US Manufacturer`+`US Manufacturer`, y = prop_manf, fill = state_abbr), shape = 21) + 
+  geom_text_repel(aes(`Non US Manufacturer`+`US Manufacturer`, y = prop_manf, fill = state_abbr, label = state_abbr)) + 
+  guides(fill = FALSE) + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "Total Companies", y = "Proportion of Companies that Manufacture")
+
+state_count_dot
+```
+```{r}
+state_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(state_abbr) %>% 
+  reg_count(state_df)
+```
+
+```{r}
+state_reg_graph1 <- state_reg %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge", fill = "Light Grey") +
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = `US Manufacturer`), alpha = 0.75, position = "dodge", fill = "Black") + 
+  geom_col(aes(x = reorder(state_abbr, prop_reg), y = n), position = "dodge", fill = "Purple") + 
+  geom_text(aes(x = reorder(state_abbr, prop_reg), y = -3, label = paste0(prop_reg*100, "%")), color = "Black", position = position_dodge(width = 1)) + 
+  guides(fill = FALSE) + 
+  coord_flip() + 
+  theme_bw() + 
+  title_theme + 
+  axis_theme + 
+  labs(x = "", y = "Companies")
+
+state_reg_graph1
+```
+
+```{r}
+state_reg_graph <- state_reg %>% 
+  ggplot() + 
+  geom_jitter(shape = 21, aes(x = prop_manf, prop_reg, fill = state_abbr), size = 7, alpha = 0.8) + 
+  geom_text_repel(aes(x = prop_manf, prop_reg, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = FALSE) + 
+  theme_bw()+ 
+  title_theme + 
+  axis_theme + 
+  theme(legend.position = "bottom") + 
+  reg_labs 
+
+state_reg_graph
+```
+
+
+```{r}
+state_df %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `Non US Manufacturer`+`US Manufacturer`), alpha = 0.75, position = "dodge") + 
+  geom_col(aes(x = reorder(state_abbr, prop_manf), y = `US Manufacturer`), position = "dodge", color = "Black") + 
+  geom_text(aes(x = reorder(state_abbr, prop_manf), y = 20, label = paste0(prop_manf*100, "%")), color = "Black", position = position_dodge(width = 1))  + coord_flip()
+```
+
+## Testing Firm Choice Models 
+
+We now summarize insights from the above data summaries, highlighting heterogeneity around: product supplied, company size, company network, entry category, and state identified in. 
+
+We note that slicing the data to a certain degree of precision (e.g product supplied and corporate network, with the specification of spin-offs), produces some perfect predictors. In addition, it appears that preliminary patterns of firm entry across the above discussed dimensions are not consistent across the two dependent variable measures above: 1) proportion of suppliers that manufacturer, and 2) proportion of manufacturers that get regulatory approval. 
+
+As such, we will test the following models: a Linear Probability Model (LPM), a logit model, and probit model. For each category of models, $Y_i$ will first be 1 if firm $i$ manufacturers, and 0 otherwise. 
+
+$$ Y_i = B_0 + B_1 size_i + B_2 network + \epsilon_i$$ 
+
+We will then consider adding three other types of differentiators: A) Supplying 1 product, or 2 products, B) Specific Product Supplied, C) De Novo or Diversifying Firm
+
+We will then conclude with seeing how the addition of state effects changes any of the results.
+
+Because all incumbent firms enter, we will remove them from the sample. They may be added in later. 
+
+```{r}
+final_data <- sample_tn %>% 
+  filter(corp_category != "Incumbent")
+```
+
+```{r}
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(jtools)
+```
+
+### LPM 
+
+```{r}
+set_summ_defaults(digits = 2, robust = "HC3")
+```
+
+#### Model 1
+```{r}
+ols_model_1 <-  lm(dom_useful_num ~ firm_size, data = final_data)
+```
+
+```{r}
+summ(ols_model_1)
+```
+
+#### Model 2
+
+
+```{r}
+ols_model_2 <-  lm(dom_useful_num ~ firm_size + corp_network, data = final_data)
+```
+
+```{r}
+summ(ols_model_2)
+```
+
+```{r}
+export_summs(ols_model_1, ols_model_2, scale = TRUE)
+```
+#### Model 3 
+
+```{r}
+library(lfe)
+```
+
+
+```{r}
+ols_model_3_fe <- felm(dom_useful_num ~ firm_size + corp_network | specific_product | 0 | specific_product, data = final_data)
+```
+
+```{r}
+summary(ols_model_3_fe)
+```
+
+
+```{r}
+ols_model_3 <-  lm(dom_useful_num ~ firm_size + corp_network + specific_product, data = final_data)
+```
+
+
+
+```{r}
+export_summs(ols_model_1, ols_model_2, ols_model_3)
+```
+#### Model 4
+
+
+```{r}
+ols_model_4_fe <- felm(dom_useful_num ~ firm_size + corp_network | corp_category | 0 | corp_category, data = final_data)
+```
+
+```{r}
+summary(ols_model_4_fe)
+```
+
+
+```{r}
+ols_model_4 <-  lm(dom_useful_num ~ firm_size + corp_network + corp_category, data = final_data)
+```
+
+```{r}
+summary(felm(dom_useful_num ~ corp_network + corp_category |  specific_product | 0 | corp_category, data = final_data))
+```
+
+```{r}
+export_summs(lm(dom_useful_num ~ corp_category + corp_network, data = final_data), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data), model.names = c("Model 4", "Model 5", "Model 6"))
+```
+```{r}
+final_data_nm <- final_data %>% 
+  filter(firm_size != "Missing", corp_network != "Unknown")
+```
+
+
+```{r}
+final_data_duns <- final_data %>% 
+  mutate(duns_test = !is.na(DUNS))
+```
+
+### Summary Plots of Above
+
+```{r}
+plot_all <- plot_summs(ols_model_1, ols_model_2, ols_model_3,lm(dom_useful_num ~ corp_category + corp_network, data = final_data), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data), omit.coefs = NULL)
+```
+
+```{r}
+plot_all_nm <- plot_summs(lm(dom_useful_num ~ firm_size, data = final_data_nm),  lm(dom_useful_num ~ firm_size + corp_network + corp_category, data = final_data_nm), lm(dom_useful_num ~ firm_size + corp_network + specific_product, data = final_data_nm), lm(dom_useful_num ~ corp_category + corp_network, data = final_data_nm), lm(dom_useful_num ~ corp_category + corp_network + firm_size, data = final_data_nm), lm(dom_useful_num ~ corp_network + corp_category + firm_size + specific_product, data = final_data_nm), omit.coefs = NULL)
+```
+
+
+```{r}
+library(patchwork)
+```
+
+```{r}
+comp_plot <- plot_all / plot_all_nm
+
+comp_plot 
+```
+
+
+```{r}
+export_summs(lm(dom_useful_num ~ firm_size + corp_network, data = final_data_nm), lm(dom_useful_num ~ corp_network + corp_category, data = final_data_nm), lm(dom_useful_num ~ corp_network + spin_off, data = final_data_nm), lm(dom_useful_num ~ firm_size + corp_network + spin_off, data = final_data_nm),  robust = TRUE)
+```
+
+```{r}
+final_de_novos <- sample_tn %>% filter(`date founded` > 2020 | is.na(`date founded`))
+```
+
+
+```{r}
+ols_model_6 <- lm(dom_useful_num ~ firm_size + corp_network, data = sample_tn %>% filter(`date founded` > 2020 | is.na(`date founded`)))
+```
+
+```{r}
+summary(ols_model_6)
+```
+
+```{r results = 'asis'}
+stargazer(ols_model_1, se = robust.se, type = "html")
+```
+
+### Probit Model 
+
+--> because of low probability of success and extreme sensitivity to different types of slicing, doesn't seem like it makes sense to do a probit model. 
+--> conclusions from the first: missing data extremely highly coorelated with not entering into manufacturing, high sensitivity to different types of slices (especially by product and company entry category)
+
+```{r}
+probit_1 <- glm(dom_useful_num ~ corp_network + corp_category, family = binomial(link = "probit"), data = final_data)
+```
+
+```{r}
+probit_2 <- glm(dom_useful_num ~ corp_network  + firm_size, family = binomial(link = "probit"), data = final_data)
+```
+```{r}
+summ(probit_2)
+```
+
+### Firm Descriptions
+
+Q: Is it worth it do a keyword search, or should we just train/use a language model? 
+H: The earlier data points have the information that we need, but are difficult to get. Instead, use ML on supplier descriptions to approximate size, capabilities, and corporate network. 
+
+We note that the above models do not seem particularly accurate or powerful in terms of predicting which firms enter a market after a demand shock and supply shortage. Above all, the intercept parameter is extremely sensitive to the combination of other variables included, suggesting that changing which term(s) are dropped may allow for a slightly better specification of the model, with less "weight" placed on the intercept, and more on individual firm attributes. Additional future work will also require testing the predictive power of the constructed model. 
+
+The "best" model from above controls for corporate network size, company entrant category, and supplier listing (product). In this model, variation in company network and company entrant likely captures the variation from firm size used in the other models. 
+
+We now see if we can add additional detail by using information provided in supplier listings. We focus on five categories (ISO certification, self-listed distributor, self-listed supplier, list an ASTM/AAMI/ANSI standard, and carry "stock"), and after preliminary testing drop ISO and supplier. 
+
+
+```{r}
+supplier_desc <- sample_tn %>% 
+  filter(corp_category != "Incumbent") %>% 
+  mutate(ISO_CERT = str_detect(desc, "ISO "), 
+         distributor = str_detect(desc, fixed("distributor", ignore_case = TRUE)), 
+         supplier = str_detect(desc, fixed("supplier", ignore_case = TRUE)), 
+         certification = str_detect(desc, "ASTM|ANSI|AAMI"), 
+         stock = str_detect(desc, fixed("stock", ignore_case = TRUE)))
+```
+
+```{r}
+desc_model_1 <- lm(dom_useful_num ~  distributor + certification + stock, data = supplier_desc)
+```
+
+```{r}
+desc_model_2 <- lm(dom_useful_num ~  distributor + certification + stock + specific_product, data = supplier_desc)
+```
+
+```{r}
+export_summs(desc_model_1, desc_model_2, lm(dom_useful_num ~  distributor + certification + stock + corp_category + corp_network + firm_size + specific_product, data = supplier_desc))
+```
+We see that a model that adds components of firm supplier listings performs slightly better than the other models without these data do, but still suffers from the same type and category of problems as the earlier models did. Again, changing the model specification to drop different categorical variables when constructing the model will likely have a significant impact on the model's interpretability. 
+
+# Moving to states
+
+
+In addition to these firm-level characteristics, we believe that the firm level decision will be influenced by the availability of regional resources to support firm entry, representing the health of the regional manufacturing ecosystem it is a part of, as captured by county or state regional controls (number of total manufacturers, ratio of large to small manufacturers, ratio of business starts to stops). 
+
+Our total number of confirmed domestic manufacturers is divided across 36 states. There are many ways to unpack the role of state ecosystems in supporting firm entry into critical product areas. Since our earlier work establishes a strong, endogenous role of state manufacturing capacity in supporting the pandemic response, it is important to control for historical trends in manufacturing. To do so, we will bring in QCEW, and Business Dynamics Statitstics (BDS) data to identify manufacturing trends. 
+
+We then plan on pairing these data with 1) Argonne National Labs Economic Development Capacity Indicators, 2) NIST MEP client interactions, 3) EDA manufacturing grants, to try and better represent the composition, and potentially evolution, of manufacturing ecosystems. 
+
+## QCEW Data 
+
+### Descriptive Statistics
+
+We start by bringing in QCEW data and creating two simple variables: manufacturing share in 2017, and manufacturing size in 2017. This process will allow us to create functions to use in later QCEW work. 
+
+```{r}
+qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
+```
+
+```{r}
+qcew_prelim <- qcew_state %>% 
+  filter(year == 2017, industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+```{r}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+```{r}
+qcew_states <- area_codes %>% 
+  left_join(states) %>% 
+  left_join(qcew_prelim, .)
+```
+
+```{r}
+hist(qcew_states$estabs)
+```
+
+
+```{r}
+hist(qcew_states$manf_share)
+
+```
+
+
+```{r}
+qcew_states %>% 
+ggplot()+ 
+  geom_point(aes(x = estabs, y = manf_share, group = state_abbr)) + 
+  labs(x = "Manufacturing Establishments", y = "Manufacturing Share of all Establishments") + 
+  theme_bw() + 
+  axis_theme
+```
+
+We now merge our QCEW variable with our dataset on firm entry. 
+
+```{r}
+ecosystem_entry <- sample_tn %>% 
+  left_join(qcew_states)
+```
+We now can create some simple plots. 
+
+First, we examine the relationship between the size of manufacturing in a state and the number of suppliers listing on Thomasnet. 
+
+```{r}
+state_entry <- sample_tn %>% 
+  group_by(dom_useful_num, state_abbr) %>% 
+  dom_count() %>% 
+  mutate(total_suppliers = `US Manufacturer` + `Non US Manufacturer`) %>% 
+  left_join(qcew_states) %>% 
+  filter(state_abbr != "ON")
+```
+
+```{r}
+state_suppliers_size <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = estabs, y = total_suppliers, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Establishments by State, 2017", y = "Total Supplier Listings, \nby listed State") + 
+  theme_bw() + 
+  axis_theme
+
+state_suppliers_size
+```
+
+```{r}
+suppliers_label <- state_suppliers_size + 
+   geom_text_repel(aes(x = estabs, y = total_suppliers, group = state_abbr, label = state_abbr))
+```
+
+
+```{r}
+state_suppliers_share <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = total_suppliers, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Total Supplier Listings, \nby listed State") + 
+  theme_bw() + 
+  axis_theme
+
+state_suppliers_share
+```
+
+```{r}
+share_label <- state_suppliers_share + 
+  geom_text_repel(aes(x = manf_share, y = total_suppliers, group = state_abbr, label = state_abbr))
+```
+We now want to compare these patterns against the total number, and proportion of suppliers that set up US manufacturing capacity. For now, we will focus on using the manufacturing share of the economy in 2017 in our descriptive statistics. 
+
+
+```{r}
+manf_states <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = `US Manufacturer`, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Confirmed Manufacturing Entrants, by State") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+manf_states_label <- manf_states + 
+  geom_text_repel(aes(x = manf_share, y = `US Manufacturer`, group = state_abbr, label = state_abbr)) 
+```
+
+
+We can now investigate the proportion of suppliers that manufacturer. 
+
+```{r}
+manf_share <- state_entry %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = prop_manf, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Proportion of Suppliers that Manufacturer, by State") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+manf_share_label <- manf_share + 
+  geom_text_repel(aes(x = manf_share, y = prop_manf, group = state_abbr, label = state_abbr)) 
+```
+
+We now look at regulatory approval rates. 
+
+```{r}
+state_entry_reg <- sample_tn %>% 
+  reg_fil() %>% 
+  group_by(state_abbr) %>% 
+  reg_count(state_entry) %>% 
+  rename(reg_n = n)
+```
+
+```{r}
+state_entry_reg %>% 
+  ggplot() + 
+  geom_count(aes(x = manf_share, y = prop_manf, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8) + 
+  geom_count(aes(x = manf_share, y = prop_reg, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8, color = "Purple") + 
+  geom_segment(aes(x = manf_share, xend = manf_share, y = prop_manf, yend = prop_reg, group = state_abbr), alpha = 0.8) + 
+  geom_text_repel(aes(x = manf_share, y = prop_manf, group = state_abbr, label = state_abbr)) +
+  theme_bw() + 
+  axis_theme
+```
+
+
+We now work towards constructing our models.
+
+
+```{r, eval = FALSE}
+ecosystem_entry <- state_entry %>% 
+  left_join(qcew_states, .) %>% 
+  mutate(`Non US Manufacturer` = case_when(
+    is.na(`Non US Manufacturer`) ~ 0, 
+    TRUE ~ 1* `Non US Manufacturer`),
+    `US Manufacturer` = case_when(
+      is.na(`US Manufacturer`) ~ 0, 
+      TRUE ~ 1* `US Manufacturer`), 
+    total_suppliers = case_when(
+      is.na(total_suppliers) ~ 0 ,
+      TRUE ~ 1* total_suppliers), 
+    prop_manf = case_when(
+      is.na(prop_manf) ~ 0, 
+      TRUE ~ 1* prop_manf))
+```
+
+
+```{r}
+qcew_prelim <- qcew_state %>% 
+  filter(year == 2017, industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+
+
+```{r}
+ecosystem_entry <- qcew_state %>% 
+  filter(year == 2010, industry_code == "31-33") %>% 
+  mutate(area_code = as.numeric(area_fips)) %>% 
+  select(area_code, area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
+  mutate(manf_share_2010 = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp, 
+         estabs_2010 = estabs) %>% 
+  group_by(area_code, area_fips) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1) %>% 
+  select(area_fips, estabs_2010, manf_share_2010) %>% 
+  left_join(state_entry, .) 
+```
+
+
+
+```{r}
+state_model_1 <- lm(total_suppliers ~ manf_share + estabs, data = ecosystem_entry)
+
+state_model_2 <- lm(total_suppliers ~ manf_share_2010 + estabs_2010 + manf_share + estabs, data = ecosystem_entry)
+```
+
+```{r}
+ecosystem_entry$tot_suppliers_pred <- state_model_2$fitted.values
+ecosystem_entry$tot_suppliers_pred_1 <- state_model_2$fitted.values
+ecosystem_entry$tot_suppliers_pred_2 <- state_model_1$fitted.values
+```
+
+
+```{r}
+export_summs(state_model_1, state_model_2)
+```
+```{r}
+
+state_model_3 <- lm(prop_manf ~ manf_share + estabs, data = ecosystem_entry)
+
+state_model_4 <- lm(prop_manf ~ manf_share + estabs + tot_suppliers_pred, data = ecosystem_entry)
+
+state_model_5 <- lm(prop_manf ~ manf_share + estabs + tot_suppliers_pred + estabs_2010, data = ecosystem_entry)
+
+state_model_6 <- lm(prop_manf ~ manf_share + estabs + tot_suppliers_pred + manf_share_2010 + estabs_2010, data = ecosystem_entry)
+
+state_model_7 <- lm(prop_manf ~ manf_share + estabs + tot_suppliers_pred + manf_share_2010, data = ecosystem_entry)
+```
+
+
+```{r}
+summ(state_model_6)
+```
+
+
+```{r}
+export_summs(state_model_3, state_model_4, state_model_5, state_model_7)
+```
+
+```{r}
+
+```
+
+

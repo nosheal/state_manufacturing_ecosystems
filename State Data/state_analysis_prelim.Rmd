@@ -1,0 +1,147 @@
+---
+title: "Preliminary State Analysis"
+author: "Nikhil Kalathil"
+date: "2022-08-31"
+output: html_document
+---
+
+In this document we will begin with our confirmed database of manufacturers by state, and merge these data with our state controls to establish our first preliminary regressions. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+library(RColorBrewer)
+library(here)
+```
+```{r}
+
+box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+# Importing Manufacturers 
+
+
+```{r}
+full_sample <- readRDS(box_here("matched_states.RDS")) %>% 
+  filter(!specific_product %in% c("Cloth Masks", "No Latex Elastic")) %>% 
+   mutate(supply_phase = case_when(
+    min_date < as.Date("2020-06-01") ~ "Phase 1", 
+    min_date >= as.Date("2020-06-01") & min_date < as.Date("2020-09-01") ~ "Phase 2", 
+    min_date >= as.Date("2020-09-01") ~ "Phase 3"
+  ))
+```
+
+```{r}
+state_sample <- full_sample %>% 
+  filter(dom_useful_num == 1)
+```
+
+```{r}
+matched_sample <- readRDS(box_here("matched_sample.RDS"))
+```
+
+
+```{r}
+conf_comps_size_summary <- matched_sample %>% filter(dom_useful_num == 1 | !is.na(niosh) | !is.na(fda_510) | !is.na(eua) |!is.na(first_contract)) %>% select(company, corporate_family_dbh, sales_dbh, atsite_emp_dbh) 
+```
+
+```{r}
+matched_sample_simple <- matched_sample  %>% 
+  select(company, manf_loc)
+```
+
+```{r}
+state_sample %>% 
+   select(-c(manf_loc)) %>% 
+   left_join(matched_sample_simple) %>% 
+   filter(manf_loc != 1 | is.na(manf_loc)) %>% 
+  select(company, specific_product, form_address, manf_loc) %>% 
+  write_csv(box_here("state_checks.csv"))
+```
+
+
+```{r}
+state_sample %>% 
+  select(-c(manf_loc)) %>% 
+  left_join(matched_sample) %>% 
+  view() 
+```
+# Regulatory Data
+
+
+```{r}
+library(lubridate)
+```
+
+```{r}
+niosh <-  readRDS(box_here("FDA/niosh_clean.RDS")) 
+fda <- readRDS(box_here("FDA/fda_apprs.RDS"))
+```
+
+```{r}
+fda_all <- readRDS(box_here("FDA/fda_formatch.RDS"))
+```
+
+```{r}
+remove <- c("limited" ,"ltd", "ltd", "incorporated", "company",  "corporation", "co ", "inc ", "llc")
+```
+
+
+```{r}
+fda_match <- fda_all %>% 
+  filter(product == "Surgical Face Mask" | product == "Surgical Respirator", COUNTRY_CODE == "US") %>% 
+  group_by(APPLICANT) %>% 
+  mutate(min_date = min(ddate), 
+         max_date = max(ddate), 
+         total_products = n()) %>% 
+  select(company = APPLICANT, min_date, max_date, total_products) %>% 
+  distinct() %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(company, "[[:punct:]]")))) %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(comp_match, paste(remove, collapse = "|"))))) %>%
+  mutate(reg = "FDA")
+```
+
+
+```{r}
+niosh_match <- niosh %>% 
+  mutate(date = mdy(appr_date)) %>% 
+  filter(!is.na(date)) %>% 
+  ungroup() %>% 
+  group_by(company) %>% 
+  mutate(min_date = min(date), 
+         max_date = max(date), 
+         total_products = n()) %>% 
+  select(company, min_date, max_date, total_products) %>% 
+  distinct() %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(company, "[[:punct:]]")))) %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(comp_match, paste(remove, collapse = "|"))))) %>%
+  mutate(reg = "NIOSH")
+```
+
+```{r}
+reg_match <- bind_rows(fda_match, niosh_match) %>% 
+  filter(year(min_date) < 2020) %>% 
+  rename(reg_comp = company)
+```
+
+```{r}
+check <- conf_comps_size_summary %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(company, "[[:punct:]]")))) %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(comp_match, paste(remove, collapse = "|"))))) %>% 
+  left_join(reg_match)
+```
+
+
+

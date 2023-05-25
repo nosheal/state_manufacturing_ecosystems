@@ -1,0 +1,685 @@
+---
+title: "State Controls"
+author: "Nikhil Kalathil"
+date: '2022-07-27'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This document will get QCEW earnings and employment data for key manufacturing industries to benchmark industry trends and regional concentrations. In addition, we will get local area unemployment statistics to control for unemployment rates, and business dynamic statistics data to get business starts and stops over time. 
+
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+library(RColorBrewer)
+library(here)
+```
+```{r}
+
+box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+
+# QCEW Data
+
+We start by getting industrial employment and earnings data across the US from 2017. To do this, we need to define a function that can access the BLS QCEW API. 
+
+```{r}
+qcew_industry <- function (year, qtr, industry) {
+	url <- "http://data.bls.gov/cew/data/api/YEAR/QTR/industry/INDUSTRY.csv"
+	url <- sub("YEAR", year, url, ignore.case=FALSE)
+	url <- sub("QTR", tolower(qtr), url, ignore.case=FALSE)
+	url <- sub("INDUSTRY", industry, url, ignore.case=FALSE)
+	
+  read.csv(url, header = TRUE, sep = ",", quote="\"", dec=".", na.strings=" ", skip=0)
+
+}
+
+```
+
+We will be focusing on getting specific industry slices, and the QCEW API will then return results at the county, MSA, state, and national level. However, not all manufacturing NAICS codes of interest return valid searches.
+
+We also create a function to be able to get size data as well. 
+
+```{r}
+qcew_size <- function (year, size) {
+	url <- "http://data.bls.gov/cew/data/api/YEAR/1/size/SIZE.csv"
+	url <- sub("YEAR", year, url, ignore.case=FALSE)
+	url <- sub("SIZE", size, url, ignore.case=FALSE)
+	read.csv(url, header = TRUE, sep = ",", quote="\"", dec=".", na.strings=" ", skip=0)
+}
+```
+
+
+We are interested in benchmarking total employment, manufacturing sector employment, and specific manufacturing sector specialty employment. 
+
+```{r}
+other_industries <- c("315", "3332", "3391") 
+
+other_industries <- c("Apparel Manufacturing", "Industrial Machinery Manufaturing", "Medical equipment and supplies manufacturing")
+```
+
+
+
+```{r}
+industry_codes <- c("10", "31_33", "313", "314", "333", "42")
+
+industry_titles <- c("All Industries", "Manufacturing", "Textile Mills", "Textile Product Mills", "Machinery Manufacturing", "Wholesale Trade")  
+```
+
+```{r}
+industries <- data.frame(industry_codes, industry_titles) %>% 
+  rename(industry_code = industry_codes)
+```
+
+We also want to provide a set of years that we are interested in getting data for. 
+```{r}
+years <- c(2017, 2018, 2019, 2020, 2021)
+```
+
+
+We start by creating a dataframe of total regional employment and trends. 
+
+```{r}
+industry_data_all <- qcew_industry(years[1], "a", "10") %>% 
+  filter(size_code == 0, own_code == 5) %>% 
+  mutate(year = years[1], 
+         industry_code = as.character(industry_code))
+
+for(z in 2:length(years)){
+  
+  industry_year <- qcew_industry(years[z], "a", "10") %>% 
+    filter(size_code == 0, own_code == 5) %>% 
+    mutate(year = years[z],
+           industry_code = as.character(industry_code))
+  
+  industry_data_all <- bind_rows(industry_data_all, industry_year) 
+  
+}
+```
+
+```{r}
+industry_2010 <- read_csv(box_here("State Data/2010.annual.by_industry/2010.annual 10 Total, all industries.csv")) %>% 
+  filter(size_code == 0, own_code == 5) %>% 
+  mutate(year = 2010, 
+         industry_code = as.character(industry_code)) 
+
+manf_2010 <- read_csv(box_here("State Data/2010.annual.by_industry/2010.annual 31-33 Manufacturing.csv")) %>%
+  filter(size_code == 0, own_code == 5) %>% 
+  mutate(year = 2010, 
+         industry_code = as.character(industry_code))
+
+qcew_2010 <- bind_rows(industry_2010, manf_2010)
+```
+
+
+We then iterate through our list of manufacturing sectors of interest to add employment and earnings data for each of these sectors to our original data frame. 
+
+```{r}
+for(z in 1:length(years)){
+    for(i in 2:length(industry_codes)) { 
+    industry_detail <- qcew_industry(years[z], "a", industry_codes[i]) %>% 
+    filter(size_code == 0, own_code == 5) %>% 
+      mutate(year = years[z],
+             industry_code = as.character(industry_code))
+    
+    industry_data_all <- bind_rows(industry_data_all, industry_detail) 
+    }
+}
+```
+
+```{r}
+industry_data_all %>% 
+  group_by(industry_code, year) %>% 
+  count() %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(industry_code, -n), y = n, fill = as.factor(year)), position = "dodge") + 
+  scale_fill_brewer(palette = "Set3") + 
+  theme_bw() + 
+  labs(x = "Industry Code", y = "Observations", lab = "Year")
+```
+
+We can see that as we increase the level of industry detail that we are looking for, we decrease the number of observations. Fortunately, we want to start only with state level controls. 
+
+
+```{r}
+saveRDS(industry_data_all, here("State Data/qcew_data.RDS"))
+```
+
+## Creating a Size Differentiator
+
+For some of our industries of interest, we are also interested in trends in the ratio of small to large firms in a region. 
+
+Because of the qay that the QCEW stores size data, we have to loop over different size categories, and then filter to the level of industry detail we care about. For now, we will limit our search to three industry codes: 10 (All), 31-33 (Manufacturing), 42 (Wholesale Trade). 
+
+```{r}
+size_codes <- c("1", "2", "3", "4", )
+```
+
+```{r}
+size_codes <- read_csv("https://www.bls.gov/cew/classifications/size/size-titles-csv.csv")
+```
+
+
+```{r}
+qcew_size_years <- qcew_size(2016, 1) %>% 
+  filter(industry_code == "10")
+```
+
+```{r}
+
+for(z in 1:length(years)){
+
+qcew_size_all <- qcew_size(years[z], 1) %>% 
+  filter(industry_code %in% c("10"))
+
+for(i in seq(2:9)){
+  qcew_size_hld <- qcew_size(years[z], i) %>% 
+    filter(industry_code %in% c("10"))
+  
+  qcew_size_all <- bind_rows(qcew_size_all, qcew_size_hld)
+
+}
+
+qcew_size_years <- bind_rows(qcew_size_years, qcew_size_all)
+
+}
+```
+
+```{r}
+saveRDS(qcew_size_years %>% filter(industry_code == 10, year != 2016) %>% 
+  group_by(area_fips, industry_code, year, size_code) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1), here("State Data/qcew_size_all.RDS"))
+```
+
+```{r}
+qcew_small_large <- qcew_size_years %>% 
+  filter(industry_code == 10, year != 2016) %>% 
+  group_by(area_fips, industry_code, year, size_code) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1) %>% 
+  mutate(small_large = case_when(
+      size_code >= 1 & size_code < 6 ~ "Small and Medium", 
+      size_code >= 6 ~ "Large"
+    )) %>% 
+  group_by(area_fips, industry_code, small_large, year) %>% 
+  summarise(estabs = sum(qtrly_estabs)) %>% 
+  pivot_wider(names_from = c(small_large), values_from = c(estabs)) %>%
+  rename(small_estabs = `Small and Medium`, 
+         large_estabs = `Large`)
+  
+```
+```{r}
+saveRDS(qcew_small_large, here("State Data/qcew_small_large.RDS"))
+```
+
+
+
+
+## Bringing in Agg Lvl Codes
+
+To get the appropriate level of aggregtion, we can bring in agg_lvl codes provided by the QCEW. 
+
+```{r}
+industry_data_all <- readRDS(here("State Data/qcew_data.RDS"))
+```
+
+
+```{r}
+agglvl_dict <- read.csv("https://www.bls.gov/cew/classifications/aggregation/agg-level-titles-csv.csv", header = TRUE)
+```
+
+NOTE: at this point we also clean variable names and select specific variables of interest. 
+
+```{r}
+ind_agg <- left_join(industry_data_all, agglvl_dict) %>% 
+  select(area_fips, industry_code, agglvl_code, agglvl_title, disclosure_code, 
+         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year, 
+         lq_estabs = lq_annual_avg_estabs, lq_emp = lq_annual_avg_emplvl, lq_wages = lq_total_annual_wages, lq_pay = lq_avg_annual_pay)
+```
+
+```{r}
+qcew_2010_agg <- left_join(qcew_2010, agglvl_dict) %>% 
+   select(area_fips, industry_code, agglvl_code, agglvl_title, disclosure_code, estabs = annual_avg_estabs_count, emp = annual_avg_emplvl, earnings = avg_annual_pay, year)
+```
+
+
+```{r}
+ind_agg %>% 
+  group_by(agglvl_title) %>% 
+  count()
+```
+
+We now can create four different datasets that we can refer to for future statistical work: 1) County Data, 2) MSA Data, 3) National Data, 4) State Data. Again, as with industry codes, the more detail that we desire, the fewer observations we will be ale to access. For the purposes of preliminary analysis, we will focus on the National and State level data. County and MSA data will be used in future work using NIST data to quantify a region's economic development ecosystem. 
+
+```{r}
+geog_list <- c("County", "MSA", "National", "State")
+```
+
+```{r, eval = FALSE}
+county_data <- ind_agg %>% 
+  filter(str_detect(agglvl_title, "County"))
+
+msa_data <- ind_agg %>% 
+  filter(str_detect(agglvl_title, "MSA"))
+```
+
+```{r}
+state_2010 <- qcew_2010_agg %>% 
+  filter(str_detect(agglvl_title, "State"))
+```
+
+
+```{r}
+state_data <- ind_agg %>% 
+  filter(str_detect(agglvl_title, "State"))
+
+national_data <- ind_agg %>% 
+  filter(str_detect(agglvl_title, "National"))
+```
+
+In addition, we will create dataframes that capture the high-level total employment and average earnings across industries for ease of reference. 
+
+```{r}
+total_capture <- function(data) { 
+  tot_data <- data %>% 
+    filter(industry_code == "10") %>% 
+    select(estabs, emp, earnings, estabs_change, emp_change, earnings_change, year, area_fips) 
+  
+  colnames(tot_data)[1:6] <- paste("tot", colnames(tot_data)[1:6], sep = "_")
+  
+  return(tot_data)
+  }
+```
+
+```{r}
+total_capture_2010 <- function(data) { 
+  tot_data <- data %>% 
+    filter(industry_code == "10") %>% 
+    select(estabs, emp, earnings, year, area_fips) 
+  
+  colnames(tot_data)[1:3] <- paste("tot", colnames(tot_data)[1:3], sep = "_")
+  
+  return(tot_data)
+  }
+```
+
+
+```{r}
+state_total <- state_data %>% 
+  total_capture()
+
+national_total <- national_data %>% 
+  total_capture()
+```
+
+```{r}
+qcew_2010_total <- state_2010 %>% 
+  total_capture_2010()
+```
+
+
+### Industry Specific Counter-Trends 
+
+We can use this information to also develop an indicator to compare over-the-year changes at the state level to trends in a specific industrial sector. 
+
+```{r}
+state_data %>%
+  filter(industry_code != "10") %>% 
+  left_join(state_total) %>% 
+  mutate(anti_estabs = case_when(
+    sign(estabs_change) == 1 & sign(tot_estabs_change) == -1 
+   ~ 1)) %>% 
+  filter(!is.na(anti_estabs), industry_code != "42") %>% 
+  group_by(industry_code, year) %>% 
+  count(anti_estabs)
+```
+
+Thus, we can see that there are a few states where specific industries trend upwards, even while the state trend for the industry is negative. We will flag this away later for potential use. 
+
+## Final QCEW Data Sets
+
+```{r}
+industries <- data.frame(industry_codes, industry_titles) %>% 
+  rename(industry_code = industry_codes)
+```
+
+
+```{r}
+qcew_state <- state_data %>% 
+  filter(industry_code != 10) %>% 
+  left_join(state_total) %>% 
+  left_join(industries)
+
+qcew_nation <- national_data %>% 
+  filter(industry_code != 10) %>% 
+  left_join(national_total) %>% 
+  left_join(industries)
+```
+
+```{r}
+qcew_state <- state_2010 %>% 
+  filter(industry_code != 10) %>% 
+  left_join(qcew_2010_total) %>% 
+  bind_rows(qcew_state) 
+```
+
+
+```{r}
+saveRDS(qcew_state, here("State Data/qcew_state.RDS"))
+```
+
+# BDS Data
+
+We now obtain Business Dynamics Statistics Data, and focus on a coarse breakdown of firm entry and exit by state, firm size, and sector. 
+
+## State By Sector and Firm Size 
+
+The firm-size detail will allow us to examine trends between SME and large firms in specific regions. 
+
+```{r}
+bds_url <- "https://www2.census.gov/programs-surveys/bds/tables/time-series/bds2019_st_sec_fzc.csv"
+```
+
+```{r}
+bds_data <- read_csv(bds_url) %>% 
+  filter(year > 2007, sector == "31-33")
+```
+We want to focus on only on specific variables that we will use to build indicators. 
+
+First, we want total numbers of firms and establishments. We then want establishment entry, entry rate, exit, and exit rate, as well as job creation and job creation rate. For now, we will not use job destruction. We will also get firm deaths. 
+
+```{r}
+bds_simple <- bds_data %>% 
+  select(year, st, sector, fsizecoarse, firms, estabs, emp, estabs_entry, estabs_entry_rate, estabs_exit, estabs_exit_rate, job_creation, job_creation_rate, firmdeath_firms)
+```
+
+
+
+
+Even with a rough graph, we can see that there is substantial variation in trends by firm size and state in the manufacturing sector. 
+
+```{r, eval = FALSE}
+bds_simple %>% 
+  ggplot() + 
+  geom_point(aes(x = year, y = estabs, fill = fsizecoarse), shape = 21, color = "black") + 
+  geom_line(aes(x = year, y = estabs, color = fsizecoarse), show.legend = FALSE) + 
+  facet_wrap(~st)
+```
+
+
+We will also get aggregate trends at the state, firm size level. 
+
+```{r}
+##State by Firm Size
+bds_state <- read_csv("https://www2.census.gov/programs-surveys/bds/tables/time-series/bds2019_st_fzc.csv") %>% 
+  filter(year > 2007) %>% 
+  select(year, st, fsizecoarse, firms, estabs, emp, estabs_entry, estabs_entry_rate, estabs_exit, estabs_exit_rate, job_creation, job_creation_rate, firmdeath_firms)
+
+
+##State by sector
+bds_sector <- read_csv("https://www2.census.gov/programs-surveys/bds/tables/time-series/bds2019_st_sec.csv") %>% 
+  filter(year > 2007, sector == "31-33") %>% 
+  select(year, st, sector, firms, estabs, emp, estabs_entry, estabs_entry_rate, estabs_exit, estabs_exit_rate, job_creation, job_creation_rate, firmdeath_firms)
+```
+
+```{r}
+bds_summary <- bds_state %>% 
+  select(year, st, fsizecoarse, estabs_sz_tot = estabs, 
+         ee_rate_sz_tot = estabs_exit_rate) %>% 
+  left_join(bds_simple, .) %>%
+  left_join(bds_sector %>% 
+              select(year, st, sector, estabs_sc_tot = estabs, ee_rate_sc_tot = estabs_exit_rate)) 
+```
+```{r}
+saveRDS(bds_summary, here("State Data/bds_summary.RDS"))
+```
+
+```{r}
+saveRDS(bds_simple, here("State Data/bds_data.RDS"))
+saveRDS(bds_sector, here("State Data/bds_data.RDS"))
+```
+
+Finally, we get national level trends for sectoral composition. 
+
+```{r}
+bds_size <- read_csv("https://www2.census.gov/programs-surveys/bds/tables/time-series/bds2019_sec_fzc.csv") %>% 
+  filter(year > 2007, sector == "31-33" | sector == "42") %>% 
+  select(year, sector, fsizecoarse, firms, estabs, emp, estabs_entry, estabs_entry_rate, estabs_exit, estabs_exit_rate, job_creation, job_creation_rate, firmdeath_firms)
+```
+## Preliminary exploration of national level data 
+
+```{r}
+bds_size %>% 
+  filter(sector == "31-33") %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = year, y = estabs_entry_rate, fill = fsizecoarse), size = 5, color = "light blue", alpha = 0.7) + 
+geom_point(shape = 21, aes(x = year, y = estabs_exit_rate, fill = fsizecoarse), color = "black", size = 3)
+```
+
+```{r}
+bds_size %>% 
+  filter(sector == "31-33") %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = year, y = estabs, fill = fsizecoarse), size = 5, color = "light blue", alpha = 0.7) + 
+  geom_point(shape = 21, aes(x = year, y = firms, fill = fsizecoarse), color = "black", size = 3)
+
+```
+
+# Merging with QCEW Data
+
+At this point, we want to merge with QCEW data. 
+
+```{r}
+qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
+```
+
+Comparing QCEW establishment count data to BDS data, we see that QCEW data are much higher. As such, we will want to focus on just entry, exit, and rate variables in general from the BDS data. 
+
+To merge together, we want a crosswalk between area_fips codes and state names. This will also help us later merge back with our main data set. 
+
+```{r}
+area_codes <- read_csv("https://www.bls.gov/cew/classifications/areas/area-titles-csv.csv") %>% 
+  mutate(st = as.numeric(area_fips)/1000) %>% 
+  filter(!st%%1) 
+```
+
+```{r}
+area_codes <- area_codes %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+```{r}
+saveRDS(area_codes, here("State Data/area_crosswalk.RDS"))
+```
+
+```{r}
+q
+```
+
+
+
+# OLD WORK
+
+```{r}
+state_data %>%
+  filter(industry_code != "10") %>% 
+  left_join(state_total) %>% 
+  mutate(estabs_ind = sign(estabs_change) == sign(tot_estabs_change), 
+         emp_ind = sign(emp_change) == sign(tot_emp_change), 
+         earnings_ind = sign(earnings_change) == sign(tot_earnings_change)) %>% 
+  filter(estabs_ind == TRUE ) %>% 
+  group_by(industry_code, year) %>% 
+  count(estabs_ind)
+```
+
+
+
+```{r}
+nyc_industry_clean <- nyc_industry_data %>% 
+  select(area_fips, industry_code, agglvl_code, disclosure_code, 
+         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year, 
+         lq_estabs = lq_annual_avg_estabs, lq_emp = lq_annual_avg_emplvl, lq_wages = lq_total_annual_wages, lq_pay = lq_avg_annual_pay) %>% 
+  filter(disclosure_code != "N") %>% 
+  left_join(areas) %>% 
+  left_join(industries)
+```
+
+
+We will also create a dictionary to match aggregation levels provided by QCEW. 
+
+
+
+
+```{r}
+manf <- qcew_industry(2018, "a", "31_33") 
+```
+
+
+
+
+```{r}
+agglvl_code <- c(14, 44, 54, 74)
+
+agglvl_titles <-c("National, by NAICS Sector", "MSA, Private, by NAICS Sector", "Statewide, NAICS 3-digit", "County, by NAICS sector", )
+```
+
+```{r}
+
+```
+
+
+```{r}
+qcew_area <- function(year, qtr, area) {
+	url <- "http://data.bls.gov/cew/data/api/YEAR/QTR/area/AREA.csv"
+	url <- sub("YEAR", year, url, ignore.case=FALSE)
+	url <- sub("QTR", tolower(qtr), url, ignore.case=FALSE)
+	url <- sub("AREA", toupper(area), url, ignore.case=FALSE)
+	read.csv(url, header = TRUE, sep = ",", quote="\"", dec=".", na.strings=" ", skip=0)
+}
+```
+
+
+```{r}
+area_code <- c("36000", "36005", "36081", "36085", "36047", "36061")
+
+area_title <- c("statewide", "Bronx", "Queens", "Staten Island", "Brooklyn", "Manhattan")
+```
+
+```{r}
+areas <- data.frame(area_code, area_title) %>% 
+  mutate(area_fips = as.integer(area_code))
+```
+
+
+```{r}
+industry_codes <- c("23", "31-33", "42", "48-49", "22", "562", "51211", "10")
+
+industry_titles <- c("Construction", "Manufacturing", "Wholesale Trade", "Transportation and Warehousing", "Utilities", "Waste Management", "Film Production", "All Industries")
+```
+
+```{r}
+industries <- data.frame(industry_codes, industry_titles) %>% 
+  rename(industry_code = industry_codes)
+```
+
+
+```{r}
+years <- c(2018, 2019, 2020, 2021)
+```
+
+
+
+```{r}
+nyc_industry_data <- qcew_area(2018, "a", "36000") %>% 
+  filter(size_code == 0, own_code == 5, industry_code %in% industry_codes) %>% 
+  mutate(year = 2018)
+
+for(z in 2:length(years)){
+  
+  nyc_industry_year <- qcew_area(years[z], "a", "36000") %>% 
+    filter(size_code == 0, own_code == 5, industry_code %in% industry_codes) %>% mutate(year = years[z])
+  
+  nyc_industry_data <- bind_rows(nyc_industry_data, nyc_industry_year) 
+  
+}
+```
+
+
+
+```{r}
+for(z in 1:length(years)){
+    for(i in 2:length(area_code)) { 
+    county_industry <- qcew_area(years[z], "a", area_code[i]) %>% 
+    filter(size_code == 0, own_code == 5, industry_code %in% industry_codes) %>% mutate(year = years[z])
+    
+    nyc_industry_data <- bind_rows(nyc_industry_data, county_industry) 
+    }
+}
+```
+
+```{r}
+nyc_industry_clean <- nyc_industry_data %>% 
+  select(area_fips, industry_code, agglvl_code, disclosure_code, 
+         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year) %>% 
+  filter(disclosure_code != "N") %>% 
+  left_join(areas) %>% 
+  left_join(industries)
+```
+
+
+```{r}
+library(ggrepel)
+```
+
+
+
+```{r, include = FALSE}
+library(svglite)
+```
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20), legend.text = element_text(size = 16))
+
+axis_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18))
+```
+
+```{r}
+nyc_industry_clean %>% 
+  filter(area_title != "statewide", year == 2019, industry_code == "10") %>% 
+  summarise(emp = sum(emp, na.rm = TRUE), 
+            estabs = sum(estabs, na.rm = TRUE))
+```
+
+
+```{r}
+nyc_industry_totals <- nyc_industry_clean %>% 
+  filter(area_title != "statewide", year == 2019, industry_code != "10") %>% 
+  group_by(industry_titles) %>% 
+  summarise(emp = sum(emp, na.rm = TRUE), 
+            estabs = sum(estabs, na.rm = TRUE)) %>% 
+  mutate(emp_total = sum(emp), 
+         estabs_total = sum(estabs),
+         emp_perc = (emp/emp_total)*100,
+         estabs_perc = (estabs/estabs_total)) %>% 
+  select(-c(emp, estabs))
+```
