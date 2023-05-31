@@ -1,0 +1,280 @@
+---
+title: "Manufacturing Controls"
+author: "Nikhil Kalathil"
+date: "2023-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+This document creates basic state level controls for the manufacturing economy in each state.
+
+# 3 Dimensions of Interest 
+
+
+We seek to develop a categorization of manufacturing economies along 3 dimensions: 
+
+1) Relative share of manufacturing in general
+2) Diversity of manufacturing (number of 3 digit manufacturing NAICS code with high location quotients) (Porter; Delgado; Stern)
+3) Geography of manufacturing (number of counties with 2 digit manufacturing location quotient) (Hidalgo)
+4) Ratio of small manufacturers to large manufacturers (Bernard, etc.)
+
+We will rely on QCEW data here to construct these. We are interested in state trends, relative to national trends, and only make use of county data for the third proposed categorization approach described above (geography of manufacturing). 
+
+We focus on a five year period from 2017-2021 to establish the current status of state manufacturing ecosystems, but may need to bring in more years. In addition, we use 2010 as a "baseline" year, to examine recent longer-term trends in state manufacturing economies. 
+
+From previous work, we have some previously downloaded data that can be used for both point 1 and 3 above. 
+
+# Import Existing Data
+
+We start by importing some cross-walks that will be useful throughout the rest of our work. 
+
+## Crosswalks
+
+
+### Aggregation Level Crosswalk
+
+```{r}
+# agglvl_dict <- read.csv("https://www.bls.gov/cew/classifications/aggregation/agg-level-titles-csv.csv", header = TRUE)
+
+agglvl_dict <- read.csv(here("State Data/agg-level-titles-csv.csv"), header = TRUE)
+```
+
+## Area Cross-Walk
+
+```{r}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+## 1) Manufacturing Economies
+
+Our first categorization explores the relative size and share of a state's manufacturing economy, and also provides national statistics as well. 
+
+```{r}
+qcew_data <- readRDS(here("State Data/qcew_data.RDS")) %>% 
+  filter(industry_code %in% c("10", "31-33"))
+```
+
+We clean variable names and select specific variables of interest. 
+
+```{r}
+qcew_data <- left_join(qcew_data, agglvl_dict) %>% 
+  select(area_fips, industry_code, agglvl_code, agglvl_title, disclosure_code, 
+         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year, 
+         lq_estabs = lq_annual_avg_estabs, lq_emp = lq_annual_avg_emplvl, lq_wages = lq_total_annual_wages, lq_pay = lq_avg_annual_pay)
+```
+
+We start by focusing on the state level. 
+
+
+```{r}
+qcew_state <- qcew_data %>% 
+  filter(str_detect(agglvl_title, "County|MSA", negate = TRUE))
+```
+
+```{r}
+qcew_state %>% 
+  group_by(agglvl_title, industry_code)%>%
+  count() 
+```
+
+From the data that we downloaded earlier, we see that we have five years of information about both total establishments and employment (Industry Code 10), as well as manufacturing establishments and employment (Industry Code 31-33). 
+
+We want to move Total Industry information to a separate column to better calculate the manufacturing share of the economy. 
+
+To do so, we create a function. 
+
+```{r}
+total_capture <- function(data) { 
+  tot_data <- data %>% 
+    filter(industry_code == "10") %>% 
+    select(estabs, emp, earnings, estabs_change, emp_change, earnings_change, year, area_fips) 
+  
+  colnames(tot_data)[1:6] <- paste("tot", colnames(tot_data)[1:6], sep = "_")
+  
+  return(tot_data)
+  }
+```
+
+Note that we will need to do this separately for national and state level data.
+
+```{r}
+qcew_state <- qcew_data %>% 
+  filter(str_detect(agglvl_title, "State"))
+
+qcew_national <- qcew_data %>% 
+  filter(str_detect(agglvl_title, "National"))
+```
+
+
+```{r}
+state_total <- qcew_state %>% 
+  total_capture()
+
+national_total <- qcew_national %>% 
+  total_capture()
+```
+
+```{r}
+qcew_state_clean <- qcew_state %>% 
+  filter(industry_code != 10) %>% 
+  left_join(state_total) 
+
+qcew_national_clean <- qcew_national %>% 
+  filter(industry_code != 10) %>% 
+  left_join(national_total) %>% 
+  select(year, estabs, emp, earnings, estabs_change, emp_change, earnings_change, tot_estabs, tot_emp, tot_earnings) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+
+colnames(qcew_national_clean)[2:12] <- paste("usa", colnames(qcew_national_clean)[2:12], sep = "_")
+```
+
+```{r}
+qcew_prelim <- qcew_state_clean %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp, lq_estabs, lq_emp, lq_wages, year) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+
+```{r}
+qcew_manf <- area_codes %>% 
+  left_join(states) %>% 
+  left_join(qcew_prelim, .) %>% 
+  left_join(qcew_national_clean)
+```
+To get 2010 data, we have to use a different previously constructed dataset. 
+
+```{r}
+qcew_10 <- readRDS(here("State Data/qcew_state.RDS")) %>% 
+  filter(year == 2010)
+```
+
+```{r}
+qcew_national_10 <- read_csv(here("State Data/2010.annual US000 U.S. TOTAL.csv")) %>% 
+  filter(industry_code %in% c("10", "31-33"), own_code == 5) %>% 
+  select(area_fips, industry_code, estabs = annual_avg_estabs_count, emp = annual_avg_emplvl, earnings = avg_annual_pay, year)
+```
+
+```{r}
+total_2010 <- function(data) { 
+  tot_data <- data %>% 
+    filter(industry_code == "10") %>% 
+    select(estabs, emp, earnings, year, area_fips) 
+  
+  colnames(tot_data)[1:3] <- paste("tot", colnames(tot_data)[1:3], sep = "_")
+  
+  return(tot_data)
+  }
+```
+
+```{r}
+qcew_nat_10 <- qcew_national_10 %>% 
+  total_2010() %>% 
+  left_join(qcew_national_10 %>% filter(industry_code != "10"), .) %>% 
+  select(year, estabs, emp, earnings, tot_estabs, tot_emp, tot_earnings) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+
+colnames(qcew_nat_10)[2:9] <- paste("usa", colnames(qcew_nat_10)[2:9], sep = "_")
+```
+
+
+```{r}
+qcew_10_clean <- qcew_10 %>% 
+  filter(industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp, year) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp) %>% 
+  left_join(qcew_nat_10) 
+```
+
+
+# Manufacturing Trends 
+
+We can now display some high level manufacturing trends. A few things immediately stand out. 
+
+First, the manufacturing share of employment is much higher than the manufacturing share of establishments, and that the average share of manufacturing is lower than it was in 2010. 
+
+```{r}
+qcew_10_clean %>% 
+   summarise(manf_emp_share = mean(manf_emp_share), 
+            manf_estabs_share = mean(manf_share))
+```
+
+
+```{r}
+qcew_manf %>% 
+  summarise(manf_emp_share = mean(manf_emp_share), 
+            manf_estabs_share = mean(manf_share))
+```
+
+Secondly, the average share of manufacturing across states is slightly higher than the total share of manufacturing of the US economy. 
+
+```{r}
+qcew_national_clean %>% 
+    summarise(usa_manf_emp_share = mean(usa_manf_emp_share), 
+            usa_manf_estabs_share = mean(usa_manf_share))
+```
+
+```{r}
+qcew_nat_10 %>% 
+   summarise(usa_manf_emp_share = mean(usa_manf_emp_share), 
+            usa_manf_estabs_share = mean(usa_manf_share))
+```
+
+We now seek to explore state level trends, benchmarked against the national average. 
+
+```{r}
+qcew_manf %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = tot_estabs, group = state_abbr), color = "blue", size = 1) + 
+  geom_line(data = national_avg_all, aes(x = year, y = avg_estabs ), size = 2) + 
+  theme_bw()
+```
+```{r}
+qcew_manf %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = manf_share, group = state_abbr), color = "blue", size = 1) + 
+  theme_bw()
+```
+

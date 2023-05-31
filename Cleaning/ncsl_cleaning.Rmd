@@ -1,0 +1,188 @@
+---
+title: "NCSL Cleaning"
+author: "Nikhil Kalathil"
+date: "2023-05-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+This document cleans and summarizes the NCSL State Action on Coronavirus Relief Funds database, that was previously webscraped and then manually edited in excel. 
+
+# Bring in Data
+
+```{r}
+ncsl_raw <- read_csv(here("Webscraping/ncsl.csv"))
+```
+Our first task is to try and split the description variable into parts, extracting a total dollar amount, and separating out the project description. 
+
+To do this, we will extract information between the dollar sign, and the next space. This should capture all of the dollar amount information we want. We drop one observation that adds redundant information in Missouri. 
+
+```{r}
+ncsl_clean <- ncsl_raw %>% 
+  mutate(dollars_raw = str_remove(str_extract(Description, "\\$.*?\\s"), "\\$"), 
+         million_mark = str_detect(Description, "million"),
+         billion_mark = str_detect(Description, "billion"),
+         description_clean = str_remove(Description, "\\$.*?\\s"),
+         description_clean = str_remove(description_clean, "million to"), 
+         description_clean = str_remove(description_clean, "million"), 
+         description_clean = str_remove(description_clean, "in|for|a|to"),
+         description_clean = str_trim(description_clean), 
+         dollars_spent = as.numeric(gsub(",", "", dollars_raw)), 
+         dollars_spent = case_when(
+           million_mark == TRUE ~ dollars_spent * 1000000, 
+           billion_mark == TRUE ~ dollars_spent * 1000000000,
+           TRUE ~ dollars_spent
+         ), 
+         dollars_spent = case_when(
+           dollars_spent < 500 ~ dollars_spent * 1000000, 
+           TRUE ~ dollars_spent
+         ), 
+         drop = case_when(
+           State == "Missouri" & str_detect(Description, "billion") ~ 1
+         )
+         ) %>%
+  filter(is.na(drop)) %>% 
+  select(State, Category, Description, dollars_spent, description_clean, Source) %>% 
+  filter(!is.na(dollars_spent))
+```
+
+
+We can now get some quick summary statistics and plot against the size of the state's economy. 
+
+```{r}
+ncsl_category <- ncsl_clean %>% 
+  group_by(State, Category) %>% 
+  summarize(total_dollars = sum(dollars_spent))
+```
+
+```{r}
+ncsl_state <- ncsl_clean %>% 
+  group_by(State) %>% 
+  summarize(total_dollars = sum(dollars_spent))
+```
+
+## QCEW Data 
+
+```{r}
+qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
+```
+
+```{r}
+qcew_prelim <- qcew_state %>% 
+  filter(year == 2020, industry_code == "31-33") %>% 
+  select(area_fips, estabs, tot_estabs, emp, tot_emp, lq_estabs, lq_wages, lq_emp) %>% 
+  mutate(manf_share = estabs / tot_estabs, 
+         manf_emp_share = emp / tot_emp)
+```
+
+```{r}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+```{r}
+qcew_states <- area_codes %>% 
+  left_join(states) %>% 
+  left_join(qcew_prelim, .)
+```
+```{r}
+col1 <- brewer.pal(8, "Set2")[3]
+```
+
+```{r}
+state_sum_1 <- qcew_states %>% 
+  select(State = area_title, tot_emp, emp, state_abbr) %>% 
+  left_join(ncsl_state, .) %>% 
+  ggplot() + 
+  geom_point(aes(x = tot_emp, y = total_dollars), shape = 21, fill = col1, size = 3, color = "black", alpha = 0.8) + 
+  geom_text(aes(x = tot_emp + 100000, y = total_dollars, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-3)) + 
+  theme_bw() +
+  labs(x = "Total Employees in 2020", y = "Federal CARES Act Funding Spent \n(Billions of $)") +
+  title_theme + 
+  axis_theme
+```
+
+```{r}
+state_sum_2 <- qcew_states %>% 
+  select(State = area_title, tot_emp, emp, state_abbr) %>% 
+  left_join(ncsl_state, .) %>% 
+  ggplot() + 
+  geom_point(aes(x = emp, y = total_dollars), shape = 21, fill = col1, size = 3, color = "black", alpha = 0.8) + 
+  geom_text(aes(x = emp + 10000, y = total_dollars, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-3)) + 
+  theme_bw() +
+  labs(x = "Total Manufacturing Employees in 2020", y = "Federal CARES Act Funding Spent \n(Billions of $)") +
+  title_theme + 
+  axis_theme
+```
+
+```{r}
+col2 <- c(brewer.pal(8, "Set2"), brewer.pal(8, "Set3")[1:4])
+```
+
+
+
+
+```{r}
+state_sum_3 <- qcew_states %>% 
+  select(State = area_title, state_abbr) %>% 
+  left_join(ncsl_category, .) %>% 
+  group_by(State) %>% 
+  mutate(state_total = sum(total_dollars)) %>% 
+  ungroup() %>% 
+  mutate(percent_spent = total_dollars/state_total) %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, -state_total), y = percent_spent, fill = Category, group = Category), color = "black", alpha = 0.8) + 
+  scale_fill_manual(values = col2)  + 
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw() + 
+  labs(x = "State", y = "Percent of Federal CARES Funding Spent by Category", fill = "Spending Category") + 
+  title_theme + 
+  axis_theme + 
+  theme(legend.text = element_text(size = 14), 
+        axis.text.x = element_text(angle = 90)) 
+```
+```
+
