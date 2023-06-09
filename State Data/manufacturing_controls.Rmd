@@ -277,6 +277,11 @@ state_gdp <- gdp_data %>%
 ```
 
 ```{r}
+state_gdp %>% saveRDS(here("State Data/state_gdp.RDS"))
+```
+
+
+```{r}
 manf_gdp <- gdp_data %>% 
   filter(LineCode == 12) %>% 
   mutate(across(.cols = -c(1:4), ~ as.numeric(.x))) %>% 
@@ -294,7 +299,8 @@ gdp_nat <- state_gdp %>%
   mutate(year = as.numeric(year))
 
 manf_gdp_nat <- manf_gdp %>% 
-  filter(GeoName == "United States")
+  filter(GeoName == "United States") %>% 
+  mutate(year = as.numeric(year))
 ```
 
 ```{r}
@@ -306,7 +312,7 @@ gdp_sum <- gdp_nat %>%
  
 gdp_time <- gdp_sum %>% 
   ggplot(aes(x = year, manf_share, group = year)) +
-  geom_point(size = 2) + 
+  geom_point(size = 3) + 
   scale_y_continuous(labels = scales::percent) + 
   theme_bw() + 
   labs(x = "Year", y = "National Manufacturing Share of GDP") + 
@@ -327,12 +333,30 @@ manf_gdp_share_clean <- area_codes %>%
   mutate(year = as.numeric(year))
 ```
 
+```{r}
+manf_gdp_all <- manf_gdp %>% 
+  filter(GeoName != "United States") %>% 
+  mutate(year = as.numeric(year)) %>% 
+  select(area_fips, year, gdp_manf) %>% 
+  left_join(manf_gdp_share_clean, . ) 
+```
+
 
 ### Historical Trends
 
 ```{r}
-manf_data <- left_join(qcew_manf_all, manf_gdp_share_clean)
+manf_data <- left_join(qcew_manf_all, manf_gdp_all)
 ```
+
+```{r}
+manf_data %>% 
+  filter(year == 2019) %>% 
+  ggplot() + 
+  geom_text(aes(x = manf_gdp_share, y = gdp_manf/emp, label = state_abbr)) +
+  geom_text(aes(x = manf_emp_share, y = gdp_manf/emp, label = state_abbr), color = "blue")
+```
+
+
 
 ```{r}
 emp_gdp_sum <- manf_data %>% 
@@ -550,27 +574,27 @@ We see an astonishing 12 different types of states!
 
 11 states are declining across the board, with a 2019 manufacturing share of employment and GDP below the national average, with manufacturing share of both declining in both between 2010 and 2019. (Colorado, Maryland, Massachusetts, New Jersey, New Mexico, New York, North Dakota, Virginia, Washington, West Virginia)
 
-5 states have a 2019 manufacturing share of employment and GDP lower than the national average and see the manufacturing share of employment decrease, but see the manufacturing share of GDP increase. (Alaska, Florida, Delaware, Rhode Island, Arizona)
+5 states have a 2019 manufacturing share of employment and GDP lower than the national average and see (between 2010 and 2019) the manufacturing share of employment decrease, but see the manufacturing share of GDP increase. (Alaska, Florida, Delaware, Rhode Island, Arizona)
 
-3 states are below the 2019 manufacturing share but see both their manufacturing share of GDP and employment increase. (Montana, Nevada, and Wyoming)
+3 states are below the 2019 manufacturing share of employment and GDP but see both their manufacturing share of GDP and employment increase between 2010 and 2019. (Montana, Nevada, and Wyoming)
 
-2 states are below the 2019 national average share of employment, but above the national average share of GDP, and see their manufacturing share of both decline. (Louisiana, Texas) 
+2 states are below the 2019 national average manufacturing share of employment, but above the national average manufacturing share of GDP, and see their manufacturing share of both decline between 2010 and 2019. (Louisiana, Texas) 
 
-1 state is below the 2019  average share of employment, above the national average share of GDP, and sees it manufacturing share of employment shrink, but its manufacturing share of GDP grow (California) 
+1 state is below the 2019 national average manufacturing share of employment, above the national average manufacturing share of GDP, and sees it manufacturing share of employment shrink, but its manufacturing share of GDP grow between 2010 and 2019 (California) 
 
-4 states are above the 2019 national average employment share, but are below the national average GDP share, and see both decline. (Georgia, Maine, Vermont, Nebraska)
+4 states are above the 2019 national average manufacturing employment share, but are below the national average manufacturing GDP share, and see both decline between 2010 and 2019. (Georgia, Maine, Vermont, Nebraska)
 
-1 state is above the 2019 national average employment share, but below the national average GDP share, and sees the manufacturing share of GDP increase, but the manufacturing share of employment decrease. (New Hampshire)
+1 state is above the 2019 national average manufacturing employment share, but below the national average manufacturing GDP share, and sees the manufacturing share of GDP increase, but the manufacturing share of employment decrease between 2010 and 2019. (New Hampshire)
 
-3 states are above the 2019 national average employment share, and see the manufacturing share of employment increase into 2019, but are below the national average manufacturing GDP share, and see the manufacturing share of GDP decline. (Idaho, Oklahoma, and South Dakota) 
+3 states are above the 2019 national average manufacturing employment share, and see the manufacturing share of employment increase between 2010 and 2019, but are below the 2019 national average manufacturing GDP share, and see the manufacturing share of GDP decline between 2010 and 2019. (Idaho, Oklahoma, and South Dakota) 
 
-10 states are above the 2019 national average employment and GDP share, and see both decline (Connecticut, Illinois, Minnesota, Mississippi, North Carolina, Ohio, Oregon, South Carolina, Utah, Pennsylvania)
+10 states are above the 2019 national average manufacturing employment and GDP share, and see both decline  between 2010 and 2019 (Connecticut, Illinois, Minnesota, Mississippi, North Carolina, Ohio, Oregon, South Carolina, Utah, Pennsylvania)
 
-3 states are above the 2019 national average employment and GDP share, and see their manufacturing share of employment decline, but the manufacturing share of GDP increase. (Arkansas, Kansas, Tennessee) 
+3 states are above the 2019 national average manufacturing employment and GDP share, and see their manufacturing share of employment decline, but the manufacturing share of GDP increase between 2010 and 2019. (Arkansas, Kansas, Tennessee) 
 
-4 states are above the 2019 national average employment and GDP share and see their manufacturing share of employment grow, but the manufacturing share of GDP decrease. (Indiana, Iowa, Missouri, Wisconsin)
+4 states are above the 2019 national average manufacturing employment and GDP share and see their manufacturing share of employment grow, but the manufacturing share of GDP decrease between 2010 and 2019. (Indiana, Iowa, Missouri, Wisconsin)
 
-Finally, 3 states are above the 2019 national average employment and GDP share and see their manufacturing share of employment and GDP grow. (Alabama, Kentucky, Michigan)
+Finally, 3 states are above the 2019 national average manufacturing employment and GDP share and see their manufacturing share of employment and GDP grow between 2010 and 2019. (Alabama, Kentucky, Michigan)
 
 We would like to simplify variation among these states. Let us store the initial numbers of groups for now. 
 
@@ -986,6 +1010,7 @@ qcew_county %>%
   geom_density_ridges2()
   
 ```
+
 To understand the geographic distribution of manufacturing in a region, we can examine the mean of the employment location quotient, the standard deviation, as well as the max and the total count of counties with location quotient greater than 2. Specifically, we can look at the max location quotient, and the number of counties greater than 2. States with a high max location quotient but a low number of total counties with a LQ > 1.5 are considered to be geographically concentrated, while states with more counties with LQ > 1.5 are considered to be geographically distributed. 
 
 ```{r}
@@ -1023,6 +1048,17 @@ geog_lq %>%
             lq_2 = sum(lq_2)) %>% 
   view()
 ```
+
+We can also start to define some categories for our states. Based on the above graph, we propose delineating states across two dimensions: absolute strength in manufacturing, and concentration of manufacturing. In this case, we define absolute strength in manufacturing as: the state has at least one county with a manufacturing employment location quotient of at least 5. We define concentration in manufacturing based on the percent of counties in a state with a manufacturing employment location quotient of at least 1.5: states with less than 40% of counties are concentrated, while states with more than 40% of counties are distributed. 
+
+```{r}
+state_cats_2 <- geog_lq %>% 
+  mutate(geog_strength = max_lq >= 5.0, 
+         geog_conc = (lq_2/counties) < .4) %>% 
+  select(state_abbr, geog_strength, geog_conc) %>% 
+  left_join(state_cats)
+```
+
 
 # Industry Controls 
 
@@ -1167,6 +1203,7 @@ ind_graph_gdp <- ind_lq_gdp %>%
 ind_graph_gdp
 ```
 
+We can do some basic analysis about trends over time to see how the mean and max 3-digit manufacturing GDP location quotients change over time. 
 
 ```{r}
 ind_lq_gdp %>% 
@@ -1174,6 +1211,13 @@ ind_lq_gdp %>%
   geom_line(aes(x = year, y = mean_lq_gdp, group = GeoName, color = GeoName))
 ```
 
+```{r}
+ind_lq_gdp %>% 
+  ggplot() +
+  geom_line(aes(x = year, y = max_lq_gdp, group = GeoName, color = GeoName))
+```
+
+And we can also examine the correlation between the manufacturing GDP and employment location quotients. 
 
 ```{r}
 mean_lq_comp <- ind_lq_gdp %>%
@@ -1213,4 +1257,84 @@ max_lq_comp
 lq_comp <- mean_lq_comp + max_lq_comp
 ```
 
-We now have some basic dimensions that we can start to use to categorize manufacturing ecosystems! 
+We see that 3-digit manufacturing GDP and employment location quotients appear to be quite correlated. Because of missing data issues, we focus our categorization of states on the 3-digit manufacturing GDP location quotient. 
+
+As with geography, we propose delineating states across two dimensions: absolute strength in manufacturing, and concentration of manufacturing. In this case, we define absolute strength in manufacturing as: the state has at least 3-digit manufacturing industry with a GDP location quotient of at least 4. We define concentration in manufacturing based on the percent of 3-digit manufacturing industries in a state with a manufacturing GDP location quotient of at least 1.5: states with less than 35% of industries are concentrated, while states with more than 35% of industries are distributed. Note that the numbers we use for the industry categorization are slightly different than the numbers we use for the geographic categorization. 
+
+```{r}
+state_cats_3 <- ind_lq_gdp %>%
+  filter(year == 2019) %>% 
+  rename(area_title = GeoName) %>% 
+  left_join(states) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  mutate(ind_strength = max_lq_gdp >= 4.0, 
+         ind_conc = (lq_1_gdp/industries) > .35) %>% 
+  select(state_abbr, ind_strength, ind_conc) %>% 
+  left_join(state_cats_2)
+```
+
+We can now explore how geographic and industry concentrations and strength relate to one another, as well as how they relate to the overall strength of the manufacturing economy in a state. 
+
+```{r}
+state_cats_3 %>% 
+  group_by(ind_strength, ind_conc, geog_strength, geog_conc) %>% 
+  count()
+```
+
+We see that 22 states have low industry and geography strength, have distributed industry, and are geographically concentrated. (Arizona, California, Colorado, Delaware, Florida, Hawaii, Maryland, Massachusetts, Montana, Nebraska, New Hampshire, New Jersey, New Mexico, New York, North Dakota, Oklahoma, Rhode Island, South Dakota, Texas, Utah, Vermont, Virginia)
+
+5 states have low industry strength and distributed, but have geographic strength and are concentrated. (Alaska, Illinois, Missouri, Nevada, and West Virginia)
+
+1 state has low industry strength, sees industry distribution, but is geographically strong and concentrated (Pennsylvania)
+
+3 states have low industry strength, see industry concentration, and are geographically strong and distributed (Minnesota, Ohio, Tennessee)
+
+1 state has high industry strength and is distributed, but is geographically weak and distributed. (Connecticut)
+
+7 states have high industry strength and distributed industry, but are geographically weak and concentrated. (Idaho, Kansas, Louisiana, Maine, Oregon, Washington, Wyoming)
+
+1 state has high industry strength and distributed industry, and is geographically strong and concentrated. (Georgia)
+
+2 states have high industry strength and distributed industry, and are geographically weak and distributed. (Michigan, Wisconsin)
+
+8 states have high industry strength and distributed industry, and are geographically strong but concentrated. (Alabama, Arkansas, Indiana, Iowa, Kentucky, Mississippi, North Carolina, South Carolina)
+
+```{r}
+state_cats_3 %>% 
+  group_by(group_id) %>% 
+  count(ind_strength, ind_conc, geog_conc, geog_strength)
+```
+
+# State Categorizations
+
+We now seek to combine the higher level manufacturing trends with the manufacturing and geographic composition categories. 
+
+We can simplify the 12 categories of state variation into five: 
+
+1. Declining Manufacturing Economy:
+
+States: Colorado, Maryland, Massachusetts, New Jersey, New Mexico, New York, North Dakota, Virginia, Washington, West Virginia
+
+Description: These states have below-average manufacturing shares of employment and GDP in 2019, with both measures declining between 2010 and 2019. 
+
+2. High-Output, Low Employment Manufacturing Economy 
+
+States: Alaska, Delaware, Florida, Rhode Island, Arizona
+
+Description: These states have below-average manufacturing shares of employment and GDP in 2019. While the manufacturing share of employment decreased between 2010 and 2019, the manufacturing share of GDP increased. 
+
+2. Emerging Manufacturing Economy:
+
+States: Montana, Nevada, Wyoming
+
+Description: These states have below-average manufacturing shares of employment and GDP in 2019. However, both their manufacturing share of employment and GDP increased between 2010 and 2019. 
+
+3. Mixed Manufacturing Economy:
+
+States: California, Louisiana, Texas
+Description: These states have below-average manufacturing shares of employment in 2019 but above-average manufacturing shares of GDP. Between 2010 and 2019, their manufacturing shares of employment declined, while the manufacturing shares of GDP increased (California) or declined (Louisiana, Texas). 
+
+4. Strong Manufacturing Base 
+
+States: Alabama, Kentucky, Michigan
+Description: These states have above-average manufacturing shares of employment and GDP in 2019. Furthermore, both their manufacturing shares of employment and GDP grew between 2010 and 2019. They exhibit a combination of distributed manufacturing composition and geographic concentration.

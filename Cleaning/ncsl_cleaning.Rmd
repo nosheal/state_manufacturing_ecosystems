@@ -124,12 +124,39 @@ qcew_states <- area_codes %>%
   left_join(states) %>% 
   left_join(qcew_prelim, .)
 ```
+
+# GDP Data
+
+```{r}
+state_gdp <- readRDS(here("State Data/state_gdp.RDS")) %>% 
+  filter(GeoName != "United States") %>% 
+  mutate(year = as.numeric(year))
+```
+
 ```{r}
 col1 <- brewer.pal(8, "Set2")[3]
 ```
 
 ```{r}
-state_sum_1 <- qcew_states %>% 
+ncsl_gdp_totals <- state_gdp %>% 
+  filter(year == 2020) %>% 
+  select(State = GeoName, state_gdp) %>% 
+  left_join(ncsl_state, . ) %>%  
+  left_join(states %>% rename(State = area_title)) %>% 
+  ggplot() + 
+  geom_point(aes(x = state_gdp, y = total_dollars), shape = 21, fill = col1, size = 3, color = "black", alpha = 0.8) + 
+  #geom_text(aes(x = state_gdp + 50000, y = total_dollars, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-3)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) + 
+  theme_bw() +
+  labs(x = "State GDP in 2020 (Billions of $)", y = "Federal CARES Act Funding Spent \n(Billions of $)") +
+  title_theme + 
+  axis_theme
+```
+
+
+```{r}
+state_sum_1_emp <- qcew_states %>% 
   select(State = area_title, tot_emp, emp, state_abbr) %>% 
   left_join(ncsl_state, .) %>% 
   ggplot() + 
@@ -143,6 +170,8 @@ state_sum_1 <- qcew_states %>%
   axis_theme
 ```
 
+
+
 ```{r}
 state_sum_2 <- qcew_states %>% 
   select(State = area_title, tot_emp, emp, state_abbr) %>% 
@@ -151,7 +180,7 @@ state_sum_2 <- qcew_states %>%
   geom_point(aes(x = emp, y = total_dollars), shape = 21, fill = col1, size = 3, color = "black", alpha = 0.8) + 
   geom_text(aes(x = emp + 10000, y = total_dollars, label = state_abbr)) + 
   scale_x_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6)) + 
-  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-3)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) + 
   theme_bw() +
   labs(x = "Total Manufacturing Employees in 2020", y = "Federal CARES Act Funding Spent \n(Billions of $)") +
   title_theme + 
