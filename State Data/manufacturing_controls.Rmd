@@ -33,44 +33,29 @@ title_theme <- theme(axis.text = element_text(size = 14),
 
 axis_theme <- theme(axis.text = element_text(size = 10), 
         axis.title = element_text(size = 18))
+
+axis_theme_blank <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
 ```
 
-This document creates basic state level controls for the manufacturing economy in each state.
+This document examines a variety of basic state level controls for the manufacturing economy in each state.
 
 #  Dimensions of Interest 
 
+We seek to develop a categorization of manufacturing economies along a few dimensions of interest: 
 
-We seek to develop a categorization of manufacturing economies along 3 dimensions: 
+1) Relative share of manufacturing in general (in both employment and GDP)
+2) Relative trends in the strength of manufacturing (in both employment and GDP)
+3) Diversity of manufacturing (number of 3 digit manufacturing NAICS code with high location quotients) (Porter; Delgado; Stern)
+4) Geography of manufacturing (number of counties with 2 digit manufacturing location quotient) (Hidalgo)
+5) Ratio of small manufacturers to large manufacturers (Bernard, etc.)
 
-1) Relative share of manufacturing in general
-2) Diversity of manufacturing (number of 3 digit manufacturing NAICS code with high location quotients) (Porter; Delgado; Stern)
-3) Geography of manufacturing (number of counties with 2 digit manufacturing location quotient) (Hidalgo)
-4) Ratio of small manufacturers to large manufacturers (Bernard, etc.)
-
-We will rely on QCEW data here to construct these. We are interested in state trends, relative to national trends, and only make use of county data for the third proposed categorization approach described above (geography of manufacturing). 
+We will rely on QCEW and BEA data here to construct these. We are interested in state trends, relative to national trends, and only make use of county data for the third proposed categorization approach described above (geography of manufacturing). 
 
 We focus on a five year period from 2017-2021 to establish the current status of state manufacturing ecosystems, but may need to bring in more years. In addition, we use 2010 as a "baseline" year, to examine recent longer-term trends in state manufacturing economies. 
 
 From previous work, we have some previously downloaded data that can be used for both point 1 and 3 above. 
 
-# Import Existing Data
-
-We start by importing some previously downloaded data and cross-walks that will be useful throughout the rest of our work. 
-
-
-```{r}
-qcew_data <- readRDS(here("State Data/qcew_data.RDS")) %>% 
-  filter(industry_code %in% c("10", "31-33"))
-```
-
-We clean variable names and select specific variables of interest. 
-
-```{r}
-qcew_data <- left_join(qcew_data, agglvl_dict) %>% 
-  select(area_fips, industry_code, agglvl_code, agglvl_title, disclosure_code, 
-         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year, 
-         lq_estabs = lq_annual_avg_estabs, lq_emp = lq_annual_avg_emplvl, lq_wages = lq_total_annual_wages, lq_pay = lq_avg_annual_pay)
-```
 
 ## Crosswalks
 
@@ -99,13 +84,38 @@ area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>%
 states <- data.frame(state_abbr = state.abb, area_title = state.name)
 ```
 
+
+# Import Employment Data
+
+We start by importing some previously downloaded data and cross-walks that will be useful throughout the rest of our work. 
+
+
+```{r}
+qcew_data <- readRDS(here("State Data/qcew_data.RDS")) %>% 
+  filter(industry_code %in% c("10", "31-33"))
+```
+
+We clean variable names and select specific variables of interest. 
+
+```{r}
+qcew_data <- left_join(qcew_data, agglvl_dict) %>% 
+  select(area_fips, industry_code, agglvl_code, agglvl_title, disclosure_code, 
+         estabs = annual_avg_estabs, emp = annual_avg_emplvl, earnings = avg_annual_pay, estabs_change = oty_annual_avg_estabs_pct_chg, emp_change = oty_annual_avg_emplvl_pct_chg, earnings_change = oty_total_annual_wages_pct_chg, year, 
+         lq_estabs = lq_annual_avg_estabs, lq_emp = lq_annual_avg_emplvl, lq_wages = lq_total_annual_wages, lq_pay = lq_avg_annual_pay)
+```
+
+
 # 1) Manufacturing Economies
 
-Our first categorization explores the relative size and share of a state's manufacturing economy, and also provides national statistics as well. 
+We seek to establish a baseline measure for state manufacturing economies, which can capture their overall and relative size and trends over time. The manufacturing economy plays a unique role, and varies across industrial sectors as well as geographies. State manufacturing economies consist of unique sets of manufacturing firms, and surrounding institutional and economic environments. Existing theories tells us that particular manufacturing sectors are stronger than others, and describe how industrial clusters can promote efficiency. 
 
+As such, we seek to explore data on the size, scope, and share of state manufacturing economies over time. When necessary, we may aggregate to the county and 3-digit level for fine-grain data, but we primarily seek state-level measures of the manufacturing economy.
 
-We start by focusing on the state level. 
+These economic measures might still be confounded by political pressure, attitudes towards manufacturing in the state, and state permitting regulations. (NOTE: in addition, we may want to measure the number of available greenfield/brownfield factors, as well as utility rates in the state, in addition to labor) 
 
+We start by focusing on state level trends. We have employment as well as GDP data at the state and national levels. Here, our goal is to benchmark state performance against the national average to contextualize changes in state manufacturing economies. 
+
+We first focus on employment data. 
 
 ```{r}
 qcew_state <- qcew_data %>% 
@@ -155,6 +165,8 @@ national_total <- qcew_national %>%
   total_capture()
 ```
 
+We then filter out these aggregate measures from our earlier dataframe, and add them as column-wise variables that vary by year. 
+
 ```{r}
 qcew_state_clean <- qcew_state %>% 
   filter(industry_code != 10) %>% 
@@ -169,6 +181,8 @@ qcew_national_clean <- qcew_national %>%
 
 colnames(qcew_national_clean)[2:12] <- paste("usa", colnames(qcew_national_clean)[2:12], sep = "_")
 ```
+
+We then calculate the manufacturing share of the state economy for each state, and each year in our data. 
 
 ```{r}
 qcew_prelim <- qcew_state_clean %>% 
@@ -248,6 +262,7 @@ We can now display some high level manufacturing trends. Note, here we are parti
 
 There are some advantages in using GDP data instead of employment data as a measure of the manufacturing share of the state's economy, especially since for Alaska and Hawaii employment data for 2020 and 2021 are suppressed. 
 
+## Import GDP Data
 ```{r}
 gdp_data <- read_csv(here("State Data/state_gdp_all.csv"))
 ```
@@ -258,9 +273,10 @@ We start by focusing on two digit NAICS codes. We also create a dataframe of Sta
 manf_gdp_share <- gdp_data %>% 
   filter(LineCode == 12 | LineCode == 2) %>% 
   mutate(across(.cols = -c(1:4), ~ as.numeric(.x)/lag(as.numeric(.x))), 
+         area_fips = as.character(GeoFips),
          area_fips = case_when( 
            str_length(GeoFips) < 5 ~ paste("0", GeoFips, sep = ""),
-           TRUE ~ GeoFips)) %>% 
+           TRUE ~ area_fips)) %>% 
   filter(LineCode == 12)
 
 ```
@@ -271,9 +287,10 @@ state_gdp <- gdp_data %>%
   mutate(across(.cols = -c(1:4), ~ as.numeric(.x))) %>% 
   pivot_longer(cols = -c(1:4), names_to = "year", values_to = "state_gdp") %>% 
   mutate(year = as.numeric(year),
+         area_fips = as.character(GeoFips),
          area_fips = case_when( 
            str_length(GeoFips) < 5 ~ paste("0", GeoFips, sep = ""),
-           TRUE ~ GeoFips))
+           TRUE ~ area_fips))
 ```
 
 ```{r}
@@ -286,9 +303,11 @@ manf_gdp <- gdp_data %>%
   filter(LineCode == 12) %>% 
   mutate(across(.cols = -c(1:4), ~ as.numeric(.x))) %>% 
   pivot_longer(cols = -c(1:4), names_to = "year", values_to = "gdp_manf") %>% 
-  mutate(area_fips = case_when( 
+  mutate(area_fips = as.character(GeoFips), 
+         year = as.numeric(year), 
+    area_fips = case_when( 
            str_length(GeoFips) < 5 ~ paste("0", GeoFips, sep = ""),
-           TRUE ~ GeoFips))
+           TRUE ~ area_fips))
 ```
 
 We separate out national data. 
@@ -303,50 +322,324 @@ manf_gdp_nat <- manf_gdp %>%
   mutate(year = as.numeric(year))
 ```
 
+
+
+
 ```{r}
 gdp_sum <- gdp_nat %>%
   select(-c(LineCode, Description)) %>% 
   left_join(manf_gdp_nat) %>% 
   select(-c(LineCode, Description)) %>% 
-  mutate(manf_share = gdp_manf/state_gdp) 
+  mutate(manf_share = gdp_manf/state_gdp, 
+         manf_change = gdp_manf/lag(gdp_manf) - 1, 
+         nat_change = state_gdp/lag(state_gdp) - 1) 
  
-gdp_time <- gdp_sum %>% 
+
+```
+
+```{r}
+axis_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        panel.background = element_rect(fill = "lightgrey"))
+```
+
+```{r}
+manf_point <- geom_point(size = 4, shape = 21, color = "black", fill = brewer.pal(9, "Set3")[5])
+```
+
+
+```{r}
+gdp_size_time <- gdp_sum %>% 
+  ggplot(aes(x = year, gdp_manf, group = year)) +
+  manf_point + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-6)) + 
+  theme_bw() + 
+  labs(x = "Year", y = "GDP of the Manufacturing Sector, \n$2012 Dollars") + 
+  axis_theme
+
+gdp_size_time
+```
+
+
+```{r}
+total_point <- geom_point(size = 3, shape = 21, color = "black", fill = "#A5764D") 
+```
+
+
+```{r}
+gdp_time_share <- gdp_sum %>% 
   ggplot(aes(x = year, manf_share, group = year)) +
-  geom_point(size = 3) + 
+  total_point +
   scale_y_continuous(labels = scales::percent) + 
   theme_bw() + 
   labs(x = "Year", y = "National Manufacturing Share of GDP") + 
   axis_theme
 
-gdp_time
+gdp_time_share
+```
+
+We see that the manufacturing share of the economy declines each year between 2010 and 2020, but the overall size of the manufacturing economy grows. 
+
+```{r}
+nat_manf_trends <- gdp_time_share + gdp_size_time
+```
+
+Compared to the economy as a whole, the manufacturing sector has tended to 
+
+
+```{r}
+gdp_time_change <- gdp_sum %>% 
+  ggplot() +
+  geom_line(aes(x = year, nat_change), size = 2, color = brewer.pal(11, "Spectral")[11]) + 
+  geom_line(aes(x = year, manf_change)) + 
+  geom_point(aes(x = year, manf_change), size = 3) + 
+  scale_y_continuous(labels = scales::percent) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Annual Percent Change in GDP") + 
+  axis_theme
+
+gdp_time_change
+```
+
+In total size, the manufacturing economy grows more than 15% between 2010 and 2019, with an average yearly growth rate of 1.6%. This is slightly less than the average national growth rate of the economy, which increased by 24% between 2010 and 2019, with an average yearly growth rate of 2.42%. 
+
+We can also examine a 3-year moving average to try and smooth some of the year-to-year changes. 
+
+
+```{r}
+gdp_time_change_avg <- gdp_sum %>% 
+  filter(year < 2020) %>% 
+  mutate(across(.cols = c(manf_change, nat_change), ~(.x + lag(.x, 1) + lag(.x, 2))/3)) %>% 
+  mutate(manf_change_avg = (manf_change + lag(manf_change, 1) + lag(manf_change, 2))/3) %>% 
+  filter(year > 2012) %>% 
+  ggplot() +
+  geom_line(aes(x = year, manf_change)) + 
+  geom_point(aes(x = year, manf_change), size = 3) + 
+  geom_line(aes(x = year, nat_change), size = 2, color = brewer.pal(11, "Spectral")[11]) + 
+  scale_y_continuous(labels = scales::percent) + 
+  theme_bw() + 
+  labs(x = "Year", y = "3 Year Moving Averge Annual % Change in GDP") + 
+  axis_theme
+
+gdp_time_change_avg
+```
+
+Smoothing this way, we see a consistent, year over year increase in the size of the manufacturing economy, growing slightly less than the economy as a whole until 2018, when the 3-year average growth in the manufacturing economy outpaces the national 3-year average growth in the economy. 
+
+
+```{r}
+gdp_time_change + gdp_time_change_avg
+```
+
+We save these national benchmarks for later reference and merging into cells. 
+
+```{r}
+nat_gdp_trends <- gdp_sum %>% 
+  select(year, nat_gdp_all = state_gdp, nat_gdp_manf = gdp_manf, nat_manf_share = manf_share, nat_manf_change = manf_change, nat_change) 
+```
+
+## State
+
+
+We now create a function to calculate yearly state manufacturing and total economy GDP percent change
+
+```{r}
+get_changes <- function(data) {
+  data %>% 
+    arrange(year, .by_group = TRUE) %>% 
+  mutate(manf_change = gdp_manf/lag(gdp_manf) - 1, 
+         change_3 = (manf_change + lag(manf_change, 1) + lag(manf_change, 2))/3) 
+}
+```
+
+```{r}
+manf_gdp_change <- manf_gdp %>% 
+  filter(GeoName != "United States") %>% 
+  group_by(GeoName) %>% 
+  get_changes() %>% 
+  ungroup() %>% 
+  select(-c(GeoName, GeoFips, LineCode, Description)) %>% 
+  left_join(area_codes) %>% 
+  left_join(states)
+```
+
+We perform some further cleaning. 
+
+```{r}
+manf_change_clean <- state_gdp %>% 
+  filter(GeoName != "United States") %>% 
+  group_by(GeoName) %>% 
+  rename(gdp_manf = state_gdp) %>% 
+  get_changes() %>% 
+  ungroup() %>% 
+  select(area_fips, year, state_gdp = gdp_manf, state_change = manf_change, st_change_3 = change_3) %>% 
+  left_join(manf_gdp_change) %>% 
+  filter(!is.na(state_abbr)) 
+```
+
+We can then use this dataframe to observe trends over time at the state level. 
+
+```{r}
+manf_change_clean %>% 
+  ggplot() + 
+  geom_line(aes(x = year, y = manf_change, group = state_abbr))
 ```
 
 
+However, due to the high number of states in our sample, this approach does not reveal too many insightful trends. 
+
+
+Instead, let us consider looking at just the time period between 2010 and 2019. We will define a function that lets us calculate the percent change between any two years. 
+
+
+```{r}
+gdp_perc_calc <- function(data, min_year, max_year){ 
+  data %>% 
+  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
+  arrange(state_abbr, year) %>% 
+  mutate(manf_2010 = if_else(
+           year == max_year,
+           lag(gdp_manf), 
+           NA_real_
+         ), 
+         manf_gdp_change = if_else(
+           year == max_year,
+           (gdp_manf/manf_2010) - 1, 
+           NA_real_
+         )) %>% 
+  filter(year == max_year) %>% 
+    select(year, state_abbr, manf_gdp_change)
+  }
+```
+
+```{r}
+state_gdp_perc_calc <- function(data, min_year, max_year){ 
+  data %>% 
+  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
+  arrange(state_abbr, year) %>% 
+  mutate(manf_2010 = if_else(
+           year == max_year,
+           lag(state_gdp), 
+           NA_real_
+         ), 
+         state_change = if_else(
+           year == max_year,
+           (state_gdp/manf_2010) - 1, 
+           NA_real_
+         )) %>% 
+  filter(year == max_year) %>% 
+    select(year, state_abbr, state_change)
+  }
+```
+
+```{r}
+test_f <- function(data, variables){ 
+  
+  data %>% 
+    select( {{ variables  }})}
+```
+
+
+```{r}
+manf_state_calc <- function(data, min_year, max_year, sel_vars, mut_vars){ 
+  
+  data %>% 
+    filter(year == min_year | year == max_year)%>%
+    mutate(across(.cols = {{ mut_vars }}, ~ (as.numeric(.x)/lag(as.numeric(.x)) - 1 ))) %>% 
+    filter(year == max_year) %>% 
+    select( {{ sel_vars }} )
+
+}
+```
+
+
+
+
+```{r}
+manf_2010_2019 <- manf_change_clean %>% 
+  manf_state_calc(2010, 2019, sel_vars = c(state_abbr, gdp_manf, state_gdp), mut_vars = c(gdp_manf, state_gdp)) %>% 
+  rename(mgc_2010_2019 = gdp_manf, sgc_2010_2019 = state_gdp)
+```
+
+```{r}
+nat_2010_2019 <- nat_gdp_trends %>% 
+  manf_state_calc(2010, 2019, sel_vars = c(nat_gdp_manf, nat_gdp_all), mut_vars = c(nat_gdp_manf, nat_gdp_all)) %>% 
+  rename(ngc_2010_2019 = nat_gdp_all, nmgc_2010_2019 = nat_gdp_manf)
+```
+
+
+```{r}
+manf_col <- brewer.pal(9, "Set3")[5]
+total_col <- "#A5764D"
+```
+
+```{r}
+state_change <- manf_2010_2019 %>% 
+  group_by(state_abbr) %>% 
+  left_join(manf_change_clean %>% 
+              filter(year == 2019) %>% 
+              select(year, state_abbr, state_gdp)) %>% 
+  mutate(manf_sign = mgc_2010_2019 > sgc_2010_2019 ) %>% 
+  ggplot() + 
+   geom_segment(aes(x = reorder(state_abbr, state_gdp), y = mgc_2010_2019, xend = reorder(state_abbr, state_gdp), yend = sgc_2010_2019, color = manf_sign), size = 2) +
+  geom_point(aes(x = reorder(state_abbr, state_gdp), y = mgc_2010_2019), size = 4, shape = 21, color = "black", fill = manf_col) + 
+  geom_point(aes(x = reorder(state_abbr, state_gdp), y = sgc_2010_2019), size = 3, shape = 21, color = "black", fill = total_col) + 
+  geom_hline(yintercept = 0, color = "black") + 
+  guides(fill = "none", color = "none") + 
+  scale_color_manual(values = c(total_col, manf_col))+
+  labs(x = "", y = "Percent Change in GDP, 2010 - 2019") + 
+  coord_flip() + 
+  theme_bw() + 
+  axis_theme_blank
+```
+
+
+```{r}
+state_change + 
+  geom_hline(yintercept = nat_2010_2019$nmgc_2010_2019[1], color = manf_col) + 
+  geom_hline(yintercept = nat_2010_2019$ngc_2010_2019[1], color = total_col) 
+```
+
+We now turn to explore the manufacturing share, rather than the size. 
+
+```{r, eval = FALSE}
+manf_change_clean %>% 
+  group_by(state_abbr) %>% 
+  summarize(avg_change_manf = mean(manf_change, na.rm = TRUE), avg_change_all = mean(state_change, na.rm = TRUE)) %>% 
+  ggplot() + 
+  geom_point(aes(x = reorder(state_abbr, avg_change_manf), y = avg_change_manf)) + 
+  geom_point(aes(x = reorder(state_abbr, avg_change_manf), y = avg_change_all), color = brewer.pal(9, "Set3")[3]) + 
+  coord_flip()
+```
 
 ```{r}
 manf_gdp_share_clean <- area_codes %>% 
   left_join(states) %>% 
   left_join(manf_gdp_share, .) %>% 
   filter(!is.na(state_abbr)) %>% 
-  select(c(5:16), state_abbr) %>% 
-  pivot_longer(cols = -c(state_abbr), names_to = "year", values_to = "manf_gdp_share") %>% 
+  select(c(5:16), state_abbr, area_fips) %>% 
+  pivot_longer(cols = -c(state_abbr, area_fips), names_to = "year", values_to = "manf_gdp_share") %>% 
   mutate(year = as.numeric(year))
 ```
+
 
 ```{r}
 manf_gdp_all <- manf_gdp %>% 
   filter(GeoName != "United States") %>% 
-  mutate(year = as.numeric(year)) %>% 
   select(area_fips, year, gdp_manf) %>% 
   left_join(manf_gdp_share_clean, . ) 
 ```
 
 
-### Historical Trends
+## Historical Trends
 
 ```{r}
-manf_data <- left_join(qcew_manf_all, manf_gdp_all)
+manf_data <- left_join(qcew_manf_all, manf_gdp_all) %>% 
+  group_by(state_abbr) %>% 
+  arrange(desc(year), .by_group = TRUE)
 ```
+
+### Manufacturing Share
 
 ```{r}
 manf_data %>% 
@@ -451,7 +744,6 @@ change_col <- c(brewer.pal(8, "Dark2")[6], brewer.pal(8, "Dark2")[3])
 ```
 
 
-
 ```{r}
 emp_2010_2019 <- manf_data %>% 
   change_calc_emp(min_year = 2010, max_year = 2019) %>% 
@@ -473,6 +765,15 @@ emp_2010_2019
 ```
 
 We also consider sorting by the size of the state economy, instead of the manufacturing share of employment. 
+
+```{r}
+manf_sign_calc <- function(data){
+  data %>% 
+  left_join(manf_2010_2019)  %>% 
+  mutate(manf_sign = mgc_2010_2019 > sgc_2010_2019) 
+}
+```
+
 
 ```{r}
 emp_2010_2019_b <- manf_data %>% 
@@ -499,6 +800,7 @@ We immediately see that while most states saw their manufacturing share of total
 
 NOTE if done in 2017 its:  (Indiana, Alabama, Missouri, Kentucky, South Dakota, and Idaho - 6 states), some of the states with far less of a manufacturing share of employment than the national average also saw increases (Montana, Wyoming, and Nevada - 3 states).
 
+
 ```{r}
 gdp_2010_2019 <- manf_data %>% 
   change_calc_gdp(min_year = 2010, max_year = 2019) %>% 
@@ -506,15 +808,14 @@ gdp_2010_2019 <- manf_data %>%
   geom_segment(aes(x = reorder(state_abbr, manf_gdp_share), y = manf_2010, xend = reorder(state_abbr, manf_gdp_share), yend = manf_gdp_share, color = manf_change), size = 2) +
   geom_point(aes(x = reorder(state_abbr, manf_gdp_share), y = manf_2010, group = state_abbr), fill = brewer.pal(8, "Set2")[8], alpha = 0.6, shape = 21, color = "black", size = 2) + 
   geom_point(aes(x = reorder(state_abbr, manf_gdp_share), y = manf_gdp_share, group = state_abbr, fill = manf_change), alpha = 0.8, shape = 21, color = "black", size = 3) + 
-  geom_hline(yintercept = nat_2010_gdp) + 
-  geom_hline(yintercept = nat_2019_gdp, color = "purple") + 
+  geom_hline(yintercept = nat_2019_gdp) + 
   scale_fill_manual(values = change_col) + 
   scale_color_manual(values = change_col) + 
   guides(fill = "none", color = "none") + 
   coord_flip() + 
   labs(y = "Manufacturing Share of State GDP \n(2010-2019)", x = "") + 
   theme_bw() + 
-  axis_theme 
+  axis_theme_blank
 
 gdp_2010_2019
 ```
