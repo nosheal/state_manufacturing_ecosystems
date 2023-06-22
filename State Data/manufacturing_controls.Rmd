@@ -337,11 +337,6 @@ gdp_sum <- gdp_nat %>%
 
 ```
 
-```{r}
-axis_theme <- theme(axis.text = element_text(size = 14), 
-        axis.title = element_text(size = 18), 
-        panel.background = element_rect(fill = "lightgrey"))
-```
 
 ```{r}
 manf_point <- geom_point(size = 4, shape = 21, color = "black", fill = brewer.pal(9, "Set3")[5])
@@ -490,54 +485,6 @@ However, due to the high number of states in our sample, this approach does not 
 
 
 Instead, let us consider looking at just the time period between 2010 and 2019. We will define a function that lets us calculate the percent change between any two years. 
-
-
-```{r}
-gdp_perc_calc <- function(data, min_year, max_year){ 
-  data %>% 
-  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
-  arrange(state_abbr, year) %>% 
-  mutate(manf_2010 = if_else(
-           year == max_year,
-           lag(gdp_manf), 
-           NA_real_
-         ), 
-         manf_gdp_change = if_else(
-           year == max_year,
-           (gdp_manf/manf_2010) - 1, 
-           NA_real_
-         )) %>% 
-  filter(year == max_year) %>% 
-    select(year, state_abbr, manf_gdp_change)
-  }
-```
-
-```{r}
-state_gdp_perc_calc <- function(data, min_year, max_year){ 
-  data %>% 
-  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
-  arrange(state_abbr, year) %>% 
-  mutate(manf_2010 = if_else(
-           year == max_year,
-           lag(state_gdp), 
-           NA_real_
-         ), 
-         state_change = if_else(
-           year == max_year,
-           (state_gdp/manf_2010) - 1, 
-           NA_real_
-         )) %>% 
-  filter(year == max_year) %>% 
-    select(year, state_abbr, state_change)
-  }
-```
-
-```{r}
-test_f <- function(data, variables){ 
-  
-  data %>% 
-    select( {{ variables  }})}
-```
 
 
 ```{r}
