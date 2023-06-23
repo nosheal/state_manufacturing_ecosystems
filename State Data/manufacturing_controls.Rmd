@@ -84,6 +84,9 @@ area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>%
 states <- data.frame(state_abbr = state.abb, area_title = state.name)
 ```
 
+```{r}
+area_codes <- left_join(area_codes, states)
+```
 
 # Import Employment Data
 
@@ -694,6 +697,7 @@ change_col <- c(brewer.pal(8, "Dark2")[6], brewer.pal(8, "Dark2")[3])
 ```{r}
 emp_2010_2019 <- manf_data %>% 
   change_calc_emp(min_year = 2010, max_year = 2019) %>% 
+  
   ggplot() + 
   geom_segment(aes(x = reorder(state_abbr, manf_emp_share), y = manf_2010, xend = reorder(state_abbr, manf_emp_share), yend = manf_emp_share, color = manf_change), size = 2) +
   geom_point(aes(x = reorder(state_abbr, manf_emp_share), y = manf_2010, group = state_abbr), fill = brewer.pal(8, "Set2")[8], alpha = 0.6, shape = 21, color = "black", size = 2) + 
@@ -721,21 +725,30 @@ manf_sign_calc <- function(data){
 }
 ```
 
+```{r}
+# New facet label names for manf_sign variable
+manf_sign.labs <- c("FALSE", "TRUE")
+names(manf_sign.labs) <- c("Manf GDP \n% Change < All Industry GDP \n% Change", "Manf GDP \n% Change > All Industry GDP \n% Change")
+```
+
+
 
 ```{r}
 emp_2010_2019_b <- manf_data %>% 
   change_calc_emp(min_year = 2010, max_year = 2019) %>% 
   left_join(state_gdp) %>% 
+  left_join(manf_2010_2019) %>% 
+  mutate(manf_sign = mgc_2010_2019 > sgc_2010_2019) %>% 
   ggplot() + 
   geom_segment(aes(x = reorder(state_abbr, state_gdp), y = manf_2010, xend = reorder(state_abbr, state_gdp), yend = manf_emp_share, color = manf_change), size = 2) +
   geom_point(aes(x = reorder(state_abbr, state_gdp), y = manf_2010, group = state_abbr), fill = brewer.pal(8, "Set2")[8], alpha = 0.6, shape = 21, color = "black", size = 2) + 
   geom_point(aes(x = reorder(state_abbr, state_gdp), y = manf_emp_share, group = state_abbr, fill = manf_change), alpha = 0.8, shape = 21, color = "black", size = 3) + 
-  geom_hline(yintercept = nat_2010_emp) + 
-  geom_hline(yintercept = nat_2019_emp, color = "purple") + 
+  geom_hline(yintercept = nat_2019_emp) + 
   scale_fill_manual(values = change_col) + 
   scale_color_manual(values = change_col) + 
   guides(fill = "none", color = "none") + 
   coord_flip() + 
+  facet_wrap(~manf_sign, labeller = labeller(manf_sign = manf_sign.labs)) + 
   labs(y = "Manufacturing Share of State Employment \n(2010-2019)", x = "") + 
   theme_bw() + 
   axis_theme 
@@ -800,6 +813,19 @@ When examining state manufacturing share of GDP, we see a slightly different pic
 For robustness, we could also check the above trends with establishments, but the establishment trends are very different than the employment level trends. It will be better to control for those by examining the ratio of small to large size companies. 
 
 Thus, we have our first four state-wise separators: states with a higher-than-national average manufacturing share of (employment, gdp) , and states that experienced growth in the manufacturing share of (employment, gdp) sector between 2010 and 2019. 
+
+```{r}
+manf_clean <- manf_data %>% 
+  left_join(state_gdp %>% 
+              select(year, state_gdp, area_fips)) 
+```
+
+```{r}
+saveRDS(manf_clean, here("State Data/manf_clean.RDS"))
+```
+
+
+
 
 ```{r}
 state_categorization <- manf_data %>% 
@@ -1253,13 +1279,67 @@ library(ggridges)
 ```{r}
 qcew_county %>% 
   filter(year == 2019, lq_emp != 0, !is.na(state_abbr)) %>%
-  left_join(state_categorization) %>% 
   ggplot(aes(x = lq_emp, y = state_abbr, group = state_abbr, fill = state_abbr)) + 
   geom_density_ridges2()
   
 ```
 
 To understand the geographic distribution of manufacturing in a region, we can examine the mean of the employment location quotient, the standard deviation, as well as the max and the total count of counties with location quotient greater than 2. Specifically, we can look at the max location quotient, and the number of counties greater than 2. States with a high max location quotient but a low number of total counties with a LQ > 1.5 are considered to be geographically concentrated, while states with more counties with LQ > 1.5 are considered to be geographically distributed. 
+
+```{r}
+qcew_county %>% 
+  saveRDS(here("State Data/county_employment.RDS"))
+```
+
+
+We can merge our qcew county level data with our existing manufacturing dataset. 
+
+```{r}
+emp_hhi_text <- qcew_county %>% 
+  filter(year == 2019) %>% 
+  select(county_fips = area_fips, year, county_emp = emp, state_abbr, county_lq_emp = lq_emp) %>% 
+  left_join(
+    manf_data %>% 
+      filter(year == 2019, !is.na(state_abbr))
+  ) %>% 
+  mutate(county_emp_share = county_emp/emp, 
+         county_emp_share_sq = county_emp_share**2) %>% 
+  group_by(state_abbr) %>% 
+  reframe(hhi_emp = sum(county_emp_share_sq, na.rm = TRUE), max_county_lq_emp = max(county_lq_emp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_text(aes(hhi_emp, max_county_lq_emp, label = state_abbr)) + 
+  theme_bw() + 
+  labs(x = "State Manufacturing Employment by County HHI", y = "State Maximum County Manufacturing Location Quotient") + 
+  axis_theme
+
+emp_hhi_text
+```
+
+```{r}
+emp_hhi <- qcew_county %>% 
+  filter(year == 2019) %>% 
+  select(county_fips = area_fips, year, county_emp = emp, state_abbr, county_lq_emp = lq_emp) %>% 
+  left_join(
+    manf_data %>% 
+      filter(year == 2019, !is.na(state_abbr))
+  ) %>% 
+  mutate(county_emp_share = county_emp/emp, 
+         county_emp_share_sq = county_emp_share**2) %>% 
+  group_by(state_abbr) %>% 
+  reframe(hhi_emp = sum(county_emp_share_sq, na.rm = TRUE), max_county_lq_emp = max(county_lq_emp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_point(aes(hhi_emp, max_county_lq_emp), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
+  theme_bw() + 
+  labs(x = "State Manufacturing Employment by County HHI", y = "State Maximum County Manufacturing Location Quotient") + 
+  axis_theme
+
+emp_hhi
+```
+
+
+
 
 ```{r}
 geog_lq <- qcew_county %>% 
@@ -1331,7 +1411,7 @@ ind_concentration <- qcewGetAreaData(2019, "a", area_codes$area_fips[1]) %>%
   filter(str_detect(agglvl_title, "NAICS 3")) %>% 
   mutate(industry_code = as.numeric(industry_code)) %>% 
   filter(industry_code >= 300 & industry_code <= 400) %>% 
-  select(area_fips, lq_emp = lq_annual_avg_emplvl, industry_code) 
+  select(area_fips, lq_emp = lq_annual_avg_emplvl, industry_code, estabs = annual_avg_estabs, emp =  annual_avg_emplvl) 
 ```
 
 ```{r}
@@ -1342,7 +1422,7 @@ for (i in 2:(nrow(area_codes)-3)){
   filter(str_detect(agglvl_title, "NAICS 3")) %>% 
   mutate(industry_code = as.numeric(industry_code)) %>% 
   filter(industry_code >= 300 & industry_code <= 400) %>% 
-  select(area_fips, lq_emp = lq_annual_avg_emplvl, industry_code)
+  select(area_fips, lq_emp = lq_annual_avg_emplvl, industry_code, estabs = annual_avg_estabs, emp =  annual_avg_emplvl)
   
   ind_concentration <- bind_rows(ind_concentration, ind_holder)
 }
@@ -1424,6 +1504,48 @@ state_ind <- gdp_data %>%
          ind_strong = ind_share_state > ind_share_usa) %>%
   group_by(GeoName, year) %>% 
   mutate(ind_count = n())
+```
+
+```{r}
+state_ind %>% 
+  saveRDS(here("State Data/state_ind.RDS"))
+```
+
+
+```{r}
+ind_hhi <- state_ind %>% 
+  mutate(ind_share_state_sq = ind_share_state**2) %>% 
+  group_by(area_fips) %>% 
+  reframe(hhi_ind = sum(ind_share_state_sq, na.rm = TRUE), max_ind_lq = max(ind_lq)) %>% 
+  left_join(area_codes) %>% 
+  filter(!is.na(area_fips)) %>% 
+  ggplot() + 
+  geom_point(aes(hhi_ind, max_ind_lq), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
+  geom_text(aes(hhi_ind, max_ind_lq, label = state_abbr)) + 
+  theme_bw() + 
+  labs(x = "State Manufacturing GDP by Industry HHI", y = "State Maximum Industry Manufacturing Location Quotient") + 
+  axis_theme
+```
+
+
+
+```{r}
+filter(year == 2019) %>% 
+  select(county_fips = area_fips, year, county_emp = emp, state_abbr, county_lq_emp = lq_emp) %>% 
+  left_join(
+    manf_data %>% 
+      filter(year == 2019, !is.na(state_abbr))
+  ) %>% 
+  mutate(county_emp_share = county_emp/emp, 
+         county_emp_share_sq = county_emp_share**2) %>% 
+  group_by(state_abbr) %>% 
+  reframe(hhi_emp = sum(county_emp_share_sq, na.rm = TRUE), max_county_lq_emp = max(county_lq_emp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_point(aes(hhi_emp, max_county_lq_emp), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
+  theme_bw() + 
+  labs(x = "State Manufacturing Employment by County HHI", y = "State Maximum County Manufacturing Location Quotient") + 
+  axis_theme
 ```
 
 ```{r}
