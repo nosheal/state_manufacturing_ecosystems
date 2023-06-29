@@ -340,6 +340,11 @@ gdp_sum <- gdp_nat %>%
 
 ```
 
+```{r}
+saveRDS(gdp_sum, here("State Data/national_gdp.RDS"))
+```
+
+
 
 ```{r}
 manf_point <- geom_point(size = 4, shape = 21, color = "black", fill = brewer.pal(9, "Set3")[5])
@@ -1529,24 +1534,6 @@ ind_hhi <- state_ind %>%
 
 
 
-```{r}
-filter(year == 2019) %>% 
-  select(county_fips = area_fips, year, county_emp = emp, state_abbr, county_lq_emp = lq_emp) %>% 
-  left_join(
-    manf_data %>% 
-      filter(year == 2019, !is.na(state_abbr))
-  ) %>% 
-  mutate(county_emp_share = county_emp/emp, 
-         county_emp_share_sq = county_emp_share**2) %>% 
-  group_by(state_abbr) %>% 
-  reframe(hhi_emp = sum(county_emp_share_sq, na.rm = TRUE), max_county_lq_emp = max(county_lq_emp)) %>% 
-  filter(!is.na(state_abbr)) %>% 
-  ggplot() + 
-  geom_point(aes(hhi_emp, max_county_lq_emp), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
-  theme_bw() + 
-  labs(x = "State Manufacturing Employment by County HHI", y = "State Maximum County Manufacturing Location Quotient") + 
-  axis_theme
-```
 
 ```{r}
 ind_lq_gdp <- state_ind %>% 
