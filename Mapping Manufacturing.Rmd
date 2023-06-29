@@ -1,0 +1,538 @@
+---
+title: "Mapping Manufacturing Activity"
+author: "Nikhil Kalathil"
+date: '2023-06-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this document, we will use previously cleaned data to map manufacturing activity. 
+
+We start by loading our packages and datasets.
+
+```{r, include = FALSE}
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+The three datasets we load are a state/national level dataset on state 2-digit manufacturing employment and GDP, benchmarked against national averages; a dataset on 2-digit county manufacturing employment; and a dataset on state level 3-digit manufacturing GDP. We also load a dataset of national trends to benchmark against. 
+
+```{r}
+manf_data <- readRDS(here("State Data/manf_clean.RDS"))
+county_emp <- readRDS(here("State Data/county_employment.RDS"))
+state_ind <- readRDS(here("State Data/state_ind.RDS"))
+nat_gdp <- readRDS(here("State Data/national_gdp.RDS"))
+```
+
+# Base maps
+
+We then use the urbnmapr package to get our baseline maps for plotting. We get a state map: 
+
+```{r, include = FALSE}
+states_sf <- states(cb = TRUE, resolution = "20m") %>%
+shift_geometry(position = "outside")
+
+states_leaflet <- states_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+
+
+```
+
+```{r}
+states_sf %>% 
+  ggplot(aes()) +
+  geom_sf(fill = "grey", color = "#ffffff")
+```
+
+
+We can also make an interactive map
+
+```{r}
+m <- leaflet(states_leaflet) 
+m %>% 
+  addPolygons(color = "black")
+```
+
+As well as a county map: 
+
+```{r, include = FALSE}
+county_sf <- counties(cb = TRUE)
+
+county_leaflet <- county_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+```
+
+We can then easily join our existing datasets for some easy mapping. We start with our state level maps to begin with. 
+
+# State level maps
+
+In general, we are looking to create a series of maps. The first map shows raw levels, the second map benchmarks these levels against national or state averages, the third map shows change between two specific years (either in percent change or raw percentage points in the case of manufacturing share), and the fourth map benchmarks this change against national or state averages. 
+
+As we work towards these maps, we will endeavor to explore data interactively to better contextualize our information. The high degree of heteregeneity across states, counties, and manufacturing industries suggests that at the moment, manufacturing ecosystems could be considered "high-dimensional" data structures. In our work, we seek to simplify the number of dimensions that we need to evaluate manufacturing ecosytems across, and create meanigful categorizations of state manufacturinge ecosystems. 
+
+```{r}
+state_manf <- states_leaflet %>% 
+  left_join(manf_data %>% rename(NAME = area_title))
+```
+
+
+```{r}
+state_manf_2019 <- state_manf %>% 
+  filter(year == 2019, !is.na(NAME))
+```
+
+## 2019 Employment Levels
+
+```{r}
+state_manf_emp_1 <- ggplot() +
+  geom_sf(state_manf %>% filter(year == 2019),
+          mapping = aes(fill = emp/1000, geometry = geometry), 
+          color = "black", size = 0.25) +
+  labs(fill = "Manufacturing Employment, 2019 \n (Thousands)") + 
+  scale_fill_distiller(palette = "BuPu") + 
+  theme_void()
+```
+
+```{r}
+state_manf_emp_1
+```
+
+While we can see some clear trends, this static image is perhaps not the best way to process our data. Instead, we can endeavor to build an interactive map that provides us with the information that we care about.
+
+To accomplish this, we have to create a color mapping function, plot a base map using leaflet (addPolygons function), and then add highlight options that contain customized, dynamic text to populate the labels with (highlightOptions). This work uses the leaflet package. 
+
+
+```{r}
+state_manf_2019 <- state_manf_2019 %>% 
+  mutate(emp_k = emp / 1000,
+    emp_thousands = prettyNum(emp, big.mark = ',',scientific=FALSE))
+```
+
+As we go through setting up our first interactive map, we will try and define some functions to help us create new maps later. 
+
+```{r}
+
+emp_col <- colorNumeric(palette = "BuPu", domain = state_manf_2019$emp_k, reverse = TRUE)
+```
+
+```{r}
+#DEFINE COLOR FUNCTION
+col_def <- function(data, var, col_scale){ 
+  
+  col_pal <- colorNumeric(palette = col_scale, domain = data$var, reverse = TRUE)
+  
+  }
+```
+
+```{r}
+emp_col <- col_def(state_manf_2019, emp_k, "BuPu")
+```
+
+
+```{r}
+#Create Labels for popups
+labels <- sprintf(
+  "<strong>%s</strong><br/>%s <br/> <i>Avg Monthly Employees <br/> %g, (NAICS 31-33)</i>",
+  state_manf_2019$NAME, state_manf_2019$emp_thousands, state_manf_2019$year
+) %>% lapply(htmltools::HTML)
+```
+
+
+```{r}
+#Define dynamic column selector function 
+
+var_def <- function(data, var) {
+  
+  var_list <- data %>% 
+    tibble() %>% 
+    select({{ var }}) %>% 
+    unlist()
+  
+  names(var_list) <- NULL 
+  
+  return(var_list)
+}
+```
+
+
+```{r}
+#Define dynamic label Creator
+
+label_1 <- function(data, var, text, sector){
+  
+  name_vec <- var_def(data, NAME) 
+  
+  year_vec <- var_def(data, year)
+  
+  val_vec <- var_def(data, {{ var }})
+  
+  if(typeof(year_vec) == "character"){
+    
+    sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %s,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+    ) %>% lapply(htmltools::HTML) }
+  
+  else{
+  
+  sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %g,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+) %>% lapply(htmltools::HTML) } 
+  
+}
+```
+
+```{r}
+emp_labels <- label_1(state_manf_2019, emp_thousands, "Avg Monthly Employees", "(NAICS 31-33)")
+```
+
+```{r}
+# Build map (Add Pologyons)
+m <-  state_manf_2019 %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~emp_col(state_manf_2019$emp_k),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = emp_labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))
+  
+```
+
+
+We can then add a legend to this map 
+
+```{r}
+emp_map_1 <- m %>% 
+  addLegend(pal = emp_col, values = ~emp_k, opacity = 0.7, title = "2019 Monthly NAICS 31-33 <br/> Employment",
+  position = "bottomleft")
+
+emp_map_1
+```
+
+
+We now pause to define some more generic functions for mapping. 
+
+
+```{r}
+build_map <- function(data, var1, label_var, colors, text, sector, legend_title) { 
+  
+  col_list <- var_def(data, {{ var1 }})
+  
+  col_fun <- col_def(data, var1, colors)
+  
+  popup_lablels <- label_1(data, {{ label_var }}, text, sector)
+  
+  m <- data %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~col_fun(col_list),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = popup_lablels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>% 
+    addLegend(pal = col_fun, values = col_list, opacity = 0.7, title = legend_title,
+  position = "bottomleft")
+  
+  return(m)
+  }
+```
+
+We see that we can use this function to build maps quickly! 
+
+```{r}
+build_map(state_manf_2019, emp, emp_thousands, "BuPu", "Avg Monthly Emploment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Monthly Employees")
+```
+
+## 2019 GDP Levels
+
+Now, we turn to GDP. 
+
+```{r}
+state_manf_gdp_1 <- ggplot() +
+  geom_sf(state_manf %>% filter(year == 2019),
+          mapping = aes(fill = gdp_manf/10000, geometry = geometry ), 
+          color = "black", size = 0.25) +
+  labs(fill = "Annual GDP from NAICS 31-33\n Billions of 2012 $") + 
+  scale_fill_distiller(palette = "BuPu") + 
+  theme_void() 
+
+state_manf_gdp_1
+```
+
+```{r}
+state_manf_gdp_1 + guides(fill = "none")
+```
+
+We can then also make an interactive map, similar to as we did above. First, we just have to clean up variables that we want to display, and then use our previously defined function!
+
+```{r}
+state_gdp_2019 <- state_manf_2019 %>% 
+  filter(!is.na(gdp_manf)) %>% 
+  mutate(gdp_manf_b = gdp_manf/10000,
+    gdp_manf_b_clean = round(gdp_manf_b, 2), 
+    manf_gdp_share_perc = manf_gdp_share*100, 
+    manf_gdp_share_clean = paste(round(manf_gdp_share_perc, 2), "&#37", sep = ""),
+    manf_emp_share_perc = manf_emp_share*100, 
+    manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
+```
+
+```{r}
+gdp_manf_1 <- build_map(state_gdp_2019, gdp_manf_b, gdp_manf_b_clean, "BuPu", "Avg Annual GDP, 2012$B", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Avg Annual GDP (2012$B)")
+
+gdp_manf_1
+```
+Quickly, we can also plot the correlation between manufacturing employment and manufacturing gdp. 
+
+```{r}
+gdp_emp_2019 <- state_manf_2019 %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = gdp_manf, y = emp), fill = brewer.pal(9, "Set3")[1], color = "black", size = 4, alpha = 0.7) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-4)) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3)) + 
+  labs(x = "NAICS 31-33 Annual GDP in Billions of $2012", y = "NAICS 31-33 Average Monthly Employees, Thousands") + 
+  theme_bw()
+
+gdp_emp_2019 + geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.overlaps = 30) 
+```
+
+## 2019 Manufacturing Share
+
+We now turn to manufacturing share of the economy, beginning with GDP: 
+
+### 2019 Manufacturing Share (GDP)
+
+```{r}
+gdp_manf_share <- build_map(state_gdp_2019, manf_gdp_share_perc, manf_gdp_share_clean, "BuPu", "Annual &#37 of State GDP", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Annual &#37 of State GDP")
+
+gdp_manf_share
+```
+
+
+And also for employment. 
+
+```{r}
+emp_manf_share <- build_map(state_gdp_2019, manf_emp_share_perc, manf_emp_share_clean, "BuPu", " &#37 of State Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37 of State Employment")
+
+emp_manf_share
+```
+# Trends
+
+From here, we've established basic levels in 2019 for the manufacturing state of the economy, and can now explore how the manufacturing economy in each state has grown between 2010 and 2019. 
+
+To accomplish this, we will bring back some functions we defined in previous work. 
+
+```{r}
+manf_state_calc <- function(data, min_year, max_year, sel_vars, mut_vars){ 
+  
+  data %>% 
+    filter(year == min_year | year == max_year)%>%
+    arrange(NAME, year) %>% 
+    mutate(across(.cols = {{ mut_vars }}, ~ (as.numeric(.x)/lag(as.numeric(.x)) - 1 ))) %>% 
+    filter(year == max_year) %>% 
+    select( {{ sel_vars }} )
+
+}
+```
+
+
+
+```{r}
+change_calc_emp <- function(data, min_year, max_year){ 
+  data %>% 
+  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
+  arrange(state_abbr, year) %>% 
+  mutate(manf_2010 = if_else(
+           year == max_year,
+           lag(manf_emp_share), 
+           NA_real_
+         ), 
+         emp_share_change = if_else(
+           year == max_year,
+           manf_emp_share - manf_2010, 
+           NA_real_
+         ), 
+         manf_change = emp_share_change > 0) %>% 
+  filter(year == max_year) 
+  }
+```
+
+
+```{r}
+change_calc_gdp <- function(data, min_year, max_year){ 
+  data %>% 
+  filter(year == min_year | year == max_year, !is.na(state_abbr)) %>% 
+  arrange(state_abbr, year) %>% 
+  mutate(manf_2010 = if_else(
+           year == max_year,
+           lag(manf_gdp_share), 
+           NA_real_
+         ), 
+         gdp_share_change = if_else(
+           year == max_year,
+           manf_gdp_share - manf_2010, 
+           NA_real_
+         ), 
+         manf_change = gdp_share_change > 0) %>% 
+  filter(year == max_year) 
+  }
+```
+
+
+We start by examining the percent change in the size of the manufacturing economy between 2010 and 2019. 
+
+```{r}
+trends_data_2010_2019 <- state_manf %>%
+  filter(!is.na(gdp_manf), !is.na(emp)) %>% 
+                manf_state_calc(2010,
+                               2019, 
+                               c(emp, gdp_manf, state_gdp, tot_emp, NAME),
+                               c(emp, gdp_manf, state_gdp, tot_emp)) %>%
+  mutate(gdp_manf_perc = gdp_manf*100, 
+         emp_perc = emp*100, 
+         state_gdp_perc = state_gdp*100, 
+         tot_emp_perc = state_gdp*100, 
+         gdp_manf_perc_clean = paste(round(gdp_manf_perc, 2), "&#37", sep = ""),
+         emp_perc_clean = paste(round(emp_perc, 2), "&#37", sep = ""), 
+         state_gdp_perc_clean = paste(round(emp_perc, 2), "&#37", sep = ""), 
+         tot_emp_perc_clean = paste(round(emp_perc, 2), "&#37"), 
+         year = "2010-2019")
+ 
+```
+
+
+```{r}
+build_map(trends_data_2010_2019, gdp_manf_perc, gdp_manf_perc_clean, "YlOrRd", " &#37 Change in Annual GDP", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37  Change in Annual GDP, <br/> 2010-2019")
+```
+
+
+```{r}
+build_map(trends_data_2010_2019, emp_perc, emp_perc_clean, "YlOrRd", " &#37 Change in Avg Monthly Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37  Change in <br/> Avg Monthly Employment <br/> 2010-2019")
+```
+
+We now want to benchmark changes in the manufacturing sector against changes in the state economy as a whole. At this point we realize that we need to define a new legend. Earlier, we tried to create a way to dynamically define a label by wrapping the build_map() function in a label function, but this effort failed. As such, we will continue to explicitly define the label and rewrite the build_map() function accordingly. 
+
+
+We begin with a summary graph of the trend we are attempting to show. 
+
+```{r}
+manf_col <- brewer.pal(9, "Set3")[5]
+total_col <- "#A5764D"
+```
+
+```{r}
+trends_map_2010_2019 <- trends_data_2010_2019 %>% 
+    rename(area_title = NAME, state_gdp_change = state_gdp) %>% 
+    left_join(area_codes) %>% 
+    group_by(area_title) %>% 
+    left_join(state_manf %>%
+                  tibble() %>% 
+                  filter(year == 2019) %>% 
+                  select(state_abbr, state_gdp)) %>% 
+  mutate(manf_sign = gdp_manf_perc > state_gdp_perc, 
+         manf_state_dif = state_gdp_perc - gdp_manf_perc) 
+```
+
+
+
+```{r}
+state_change <- trends_map_2010_2019 %>% 
+  ggplot() + 
+   geom_segment(aes(x = reorder(state_abbr, state_gdp), y = gdp_manf_perc, xend = reorder(state_abbr, state_gdp), yend = state_gdp_perc, color = manf_sign), size = 2) +
+  geom_point(aes(x = reorder(state_abbr, state_gdp), y = gdp_manf_perc), size = 4, shape = 21, color = "black", fill = manf_col) + 
+  geom_point(aes(x = reorder(state_abbr, state_gdp), y = state_gdp_perc), size = 3, shape = 21, color = "black", fill = total_col) + 
+  geom_hline(yintercept = 0, color = "black") + 
+  guides(fill = "none", color = "none") + 
+  scale_color_manual(values = c(total_col, manf_col))+
+  labs(x = "", y = "Percent Change in GDP, 2010 - 2019") + 
+  coord_flip() + 
+  theme_bw() + 
+  axis_theme_blank
+
+state_change
+```
+
+
+To refelect this in leaflet, we need to create one variable that can capture our desired information, and map it to a color. 
+
+```{r}
+state_benchmark_col <- colorNumeric(palette ="YlOrBr", domain = trends_map_2010_2019$manf_state_dif)
+```
+
+```{r}
+nat_sum <- gdp_sum %>% 
+  manf_state_calc(2010, 2019, sel_vars= c(gdp_manf, state_gdp), mut_vars = c(gdp_manf, state_gdp)) %>% 
+  mutate(manf_state_dif = state_gdp - gdp_manf, 
+         nat_manf_clean = paste(round(manf_state_dif*100, 2), "&#37"))
+```
+
+
+```{r}
+label_popup <- sprintf(
+  "<strong>%s</strong> <br/> 2010 - 2019 <br/> NAICS 31-33  GDP &#37 Change <br/> %s <br/> <i>All Industries GDP &#37 Change <br/> %s </i>",
+  trends_map_2010_2019$area_title, trends_map_2010_2019$gdp_manf_perc_clean, trends_map_2010_2019$state_gdp_perc_clean
+) %>% lapply(htmltools::HTML)
+
+trends_map_2010_2019 %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~state_benchmark_col(trends_map_2010_2019$manf_state_dif),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = label_popup,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>% 
+   addLegend(pal = state_benchmark_col, values = trends_map_2010_2019$manf_state_dif, opacity = 0.7, title = paste("&#37 Point Diff. <br/> (All Industries &#37 Change <br/> - NAICS 31-33 &#37 Change) <br/> National Diff.:", nat_sum$nat_manf_clean[1], sep = ""), 
+  position = "bottomleft")
+  
+```
+
