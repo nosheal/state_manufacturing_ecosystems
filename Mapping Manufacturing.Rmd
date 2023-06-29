@@ -370,6 +370,7 @@ emp_manf_share <- build_map(state_gdp_2019, manf_emp_share_perc, manf_emp_share_
 
 emp_manf_share
 ```
+
 # Trends
 
 From here, we've established basic levels in 2019 for the manufacturing state of the economy, and can now explore how the manufacturing economy in each state has grown between 2010 and 2019. 
@@ -470,6 +471,24 @@ emp_change_2010_2019 <- build_map(trends_data_2010_2019, emp_perc, emp_perc_clea
 emp_change_2010_2019
 ```
 
+
+We can also then examine the corrleation between percentage change in NAICS 31-33 employment and percentage change in GDP. 
+
+```{r}
+gdp_emp_trends <- trends_data_2010_2019 %>% 
+  rename(area_title = NAME) %>% 
+  left_join(area_codes) %>% 
+  ggplot() + 
+  geom_point(aes(emp_perc, gdp_manf_perc)) + 
+  geom_text_repel(aes(emp_perc, gdp_manf_perc, label = state_abbr)) + 
+  labs(x = "2010 to 2019 Percent Change in NAICS 31-33 Employment", y = "2010 to 2019 Percent Change in NAICS 31-33 GDP") + 
+  theme_bw() + 
+  axis_theme
+
+gdp_emp_trends
+```
+
+
 We now want to benchmark changes in the manufacturing sector against changes in the state economy as a whole. At this point we realize that we need to define a new legend. Earlier, we tried to create a way to dynamically define a label by wrapping the build_map() function in a label function, but this effort failed. As such, we will continue to explicitly define the label and rewrite the build_map() function accordingly. 
 
 We begin with a summary graph of the trend we are attempting to show. 
@@ -511,6 +530,24 @@ state_change <- trends_map_2010_2019 %>%
 state_change
 ```
 
+
+We can also view this data differently. 
+
+```{r}
+state_manf_gdp <- trends_map_2010_2019 %>% 
+  ggplot() + 
+  geom_hline(yintercept = 0)+ 
+  geom_vline(xintercept = 0) + 
+  geom_point(aes(state_gdp_perc, gdp_manf_perc, size = state_gdp, fill = manf_state_dif), shape = 21, color = "black") + 
+  scale_fill_gradient(low = total_col, high = manf_col) + 
+  geom_text_repel(aes(state_gdp_perc, gdp_manf_perc, label = state_abbr)) +
+  guides(fill = "none", size = "none") + 
+  theme_bw() + 
+  labs(x = "% Change in Annual GDP, 2010-2019 \n All Industries", y = "% Change in Annual GDP, 2010-2019 \n NAICS 31-33")
+
+state_manf_gdp
+  
+```
 
 To refelect this in leaflet, we need to create one variable that can capture our desired information, and map it to a color. 
 
@@ -566,7 +603,22 @@ state_manf_2010_2019
 
 # 2019 Industry Composition 
 
-We now turn to our industry composition data. Here, we are interested in both understanding which industries are dominant in a state, how these top industries vary across states, and how concentrated the states economy is in a few particular industries. To accomplish this, we will focus on the top 3-5 industries in the state, as well as construct a Herfindahl Hirschman index to measure concentration. 
+We now turn to our industry composition data. Here, we are interested in both understanding which industries are dominant in a state, how these top industries vary across states, and how concentrated the states economy is in a few particular industries. To accomplish this, we will focus on the top 3-5 industries in the state, as well as construct a Herfindahl Hirschman index to measure concentration.
+
+We also read in employment data. 
+
+```{r}
+ind_emp_2019 <- readRDS(here("State Data/industry_emp.RDS"))
+```
+
+```{r}
+industry_titles <- read_csv(here("State Data/industry-titles.csv")) %>% 
+  filter(str_length(industry_code) == 3) %>% 
+  mutate(industry_code = as.numeric(industry_code))
+```
+
+
+
 We will perform some of our calculations in our state_ind dataset first, and then merge this dataset with our map. 
 
 ```{r}
@@ -615,7 +667,7 @@ Now, because of differences in what we are trying to display, we will need to us
 
 ```{r}
 #Define Colors
-ind_colors <- colorFactor(palette = brewer.pal(12, "Set3"), domain = state_ind_2019_map$Description)
+ind_colors <- colorFactor(palette = brewer.pal(12, "Paired"), domain = state_ind_2019_map$Description)
 ```
 
 ```{r}
@@ -642,7 +694,7 @@ state_inds <- state_ind_2019_map %>%
     weight = 5,
     color = "#666",
     dashArray = "",
-    fillOpacity = 0.7,
+    fillOpacity = 1,
     bringToFront = TRUE),
   label = ind_labels,
   labelOptions = labelOptions(
@@ -654,6 +706,94 @@ state_inds <- state_ind_2019_map %>%
 
 state_inds
 ```
+
+## Employment 
+
+We now look at industry employment by state. 
+
+```{r}
+state_ind_2019_emp <- ind_emp_2019 %>% 
+  left_join(industry_titles) %>% 
+  left_join(manf_data %>% 
+              filter(year == 2019) %>% 
+              select(area_title, manf_emp = emp, tot_emp)) %>% 
+  group_by(area_title) %>% 
+  arrange(desc(emp), .by_group = TRUE) %>% 
+  mutate(ind_tal_emp = seq(n())) %>% 
+  mutate(emp_share = emp/tot_emp,
+         pretty_emp = prettyNum(emp, big.mark = ',',scientific=FALSE), 
+    ind_hhi_emp = sum(emp_share**2, na.rm = TRUE), 
+    Description = str_remove(industry_title, "NAICS"),
+    Description = str_remove(Description, "manufacturing"),
+    desc_3 = paste(
+    Description, ": ", pretty_emp, "<br/>", 
+    lead(Description), ": ", lead(pretty_emp), "<br/>", 
+    lead(Description, 2), ": ", lead(pretty_emp, 2), sep = ""
+  )) 
+```
+
+```{r}
+state_ind_2019_emp %>% 
+  filter(ind_tal_emp < 4) %>% 
+  ungroup() %>% 
+  count(industry_title)
+```
+
+```{r}
+ind_emp_cols <- c(brewer.pal(11, "Paired"), brewer.pal(3, "Dark2"))
+```
+
+```{r}
+state_ind_emp_2019_map <- left_join(states_leaflet, state_ind_2019_emp %>% 
+                                   rename(NAME = area_title) %>% 
+                                     filter(ind_tal_emp == 1))%>% 
+  filter(!is.na(desc_3))
+```
+
+
+```{r}
+#Define Colors
+ind_colors_emp <- colorFactor(palette = ind_emp_cols, domain = state_ind_emp_2019_map$Description)
+```
+
+```{r}
+#Define Labels
+
+ind_labels_emp <- sprintf(
+  "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
+  state_ind_emp_2019_map$NAME, state_ind_emp_2019_map$ind_hhi_emp, state_ind_emp_2019_map$desc_3) %>% lapply(htmltools::HTML)
+```
+
+
+As above, we prepare a color scheme and popup for our map.
+
+```{r}
+state_inds_emp <- state_ind_emp_2019_map %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~ind_colors_emp(state_ind_emp_2019_map$Description),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 1,
+    bringToFront = TRUE),
+  label = ind_labels_emp,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) 
+
+state_inds_emp %>% 
+  addLegend(pal = ind_colors_emp, values = state_ind_emp_2019_map$Description, opacity = 0.7, title = "Highest State 3-Digit NAICS 31-33 <br/>Average Monthly Employees",
+  position = "bottomleft")
+```
+
 
 We might then want to look at how the state HHI index corresponds with its "max" location quotient, which would be the industry in the state that the state has the largest share of, relative to the national average. 
 

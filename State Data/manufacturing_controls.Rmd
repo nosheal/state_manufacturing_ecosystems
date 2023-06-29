@@ -1450,6 +1450,11 @@ ind_conc <- area_codes %>%
   group_by(state_abbr) %>% 
   mutate(ind_count = n())
 ```
+
+```{r}
+saveRDS(ind_conc, here("State Data/industry_emp.RDS"))
+```
+
 ```{r}
 ind_lq <- ind_conc %>% 
   group_by(state_abbr) %>% 
