@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 In this document, we will use previously cleaned data to map manufacturing activity. 
@@ -20,6 +20,9 @@ library(here)
 library(leaflet)
 library(ggrepel)
 library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
 
 title_theme <- theme(axis.text = element_text(size = 14), 
         axis.title = element_text(size = 18), 
@@ -47,7 +50,21 @@ states <- data.frame(state_abbr = state.abb, area_title = state.name)
 area_codes <- left_join(area_codes, states)
 ```
 
-The three datasets we load are a state/national level dataset on state 2-digit manufacturing employment and GDP, benchmarked against national averages; a dataset on 2-digit county manufacturing employment; and a dataset on state level 3-digit manufacturing GDP. We also load a dataset of national trends to benchmark against. 
+
+```{r, include = FALSE}
+manf_col <- brewer.pal(9, "Set3")[5]
+total_col <- "#A5764D"
+```
+
+In this document, we seek to establish some baseline context about state manufacturing ecosystems. We focus on manufacturing employment and GDP, examining state and county level 2-digit NAICS codes (31-33), as well as state level 3-digit NAICS codes (300's). 
+
+We consider both absolute values, the share of the manufacturing economy relative to the total state economy, trends over time, and benchmark against both state and national level averages. 
+
+In addition, we break down the composition of manufacturing activity at both the state industry and geography levels. 
+
+For this work, we use data from the BLS QCEW (Quarterly Cencus of Employment and Wages), as well as the BEA's regional GDP measures. We define a procedure that can be modified to incorporate more granular data as well. 
+
+We start by loading in previously cleaned data. 
 
 ```{r}
 manf_data <- readRDS(here("State Data/manf_clean.RDS"))
@@ -66,20 +83,6 @@ shift_geometry(position = "outside")
 
 states_leaflet <- states_sf %>% 
   sf::st_transform('+proj=longlat +datum=WGS84')
-```
-
-```{r}
-states_sf %>% 
-  ggplot(aes()) +
-  geom_sf(fill = "grey", color = "#ffffff")
-```
-
-We can also make an interactive map
-
-```{r}
-m <- leaflet(states_leaflet) 
-m %>% 
-  addPolygons(color = "black")
 ```
 
 As well as a county map: 
@@ -104,6 +107,7 @@ state_manf <- states_leaflet %>%
   left_join(manf_data %>% rename(NAME = area_title))
 ```
 
+We begin with 2019 as our year of reference. 
 
 ```{r}
 state_manf_2019 <- state_manf %>% 
@@ -111,22 +115,7 @@ state_manf_2019 <- state_manf %>%
 ```
 
 ## 2019 Employment Levels
-
-```{r}
-state_manf_emp_1 <- ggplot() +
-  geom_sf(state_manf %>% filter(year == 2019),
-          mapping = aes(fill = emp/1000, geometry = geometry), 
-          color = "black", size = 0.25) +
-  labs(fill = "Manufacturing Employment, 2019 \n (Thousands)") + 
-  scale_fill_distiller(palette = "BuPu") + 
-  theme_void()
-```
-
-```{r}
-state_manf_emp_1
-```
-
-While we can see some clear trends, this static image is perhaps not the best way to process our data. Instead, we can endeavor to build an interactive map that provides us with the information that we care about.
+We endeavor to build an interactive map that provides us with the information that we care about.
 
 To accomplish this, we have to create a color mapping function, plot a base map using leaflet (addPolygons function), and then add highlight options that contain customized, dynamic text to populate the labels with (highlightOptions). This work uses the leaflet package. 
 
@@ -242,16 +231,6 @@ m <-  state_manf_2019 %>%
 ```
 
 
-We can then add a legend to this map 
-
-```{r}
-emp_map_1 <- m %>% 
-  addLegend(pal = emp_col, values = ~emp_k, opacity = 0.7, title = "2019 Monthly NAICS 31-33 <br/> Employment",
-  position = "bottomleft")
-
-emp_map_1
-```
-
 
 We now pause to define some more generic functions for mapping. 
 
@@ -294,29 +273,18 @@ build_map <- function(data, var1, label_var, colors, text, sector, legend_title)
 
 We see that we can use this function to build maps quickly! 
 
-```{r}
+**Manufacturing employment concentrated in a few states**
+
+```{r, echo = FALSE}
 build_map(state_manf_2019, emp, emp_thousands, "BuPu", "Avg Monthly Emploment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Monthly Employees")
 ```
+
+In terms of absolute numbers, we see that manufacturing employment is dominated by the larger economies (Texas and California), but we also see that there is a substantial amount of manufacturing employment in the midwest region. 
+
 
 ## 2019 GDP Levels
 
 Now, we turn to GDP. 
-
-```{r}
-state_manf_gdp_1 <- ggplot() +
-  geom_sf(state_manf %>% filter(year == 2019),
-          mapping = aes(fill = gdp_manf/10000, geometry = geometry ), 
-          color = "black", size = 0.25) +
-  labs(fill = "Annual GDP from NAICS 31-33\n Billions of 2012 $") + 
-  scale_fill_distiller(palette = "BuPu") + 
-  theme_void() 
-
-state_manf_gdp_1
-```
-
-```{r}
-state_manf_gdp_1 + guides(fill = "none")
-```
 
 We can then also make an interactive map, similar to as we did above. First, we just have to clean up variables that we want to display, and then use our previously defined function!
 
@@ -330,24 +298,29 @@ state_gdp_2019 <- state_manf_2019 %>%
     manf_emp_share_perc = manf_emp_share*100, 
     manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
 ```
+**Larger delta between largest states and the rest with Manufacturing GDP**
 
-```{r}
+```{r, echo = FALSE}
 gdp_manf_1 <- build_map(state_gdp_2019, gdp_manf_b, gdp_manf_b_clean, "BuPu", "Avg Annual GDP, 2012$B", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Avg Annual GDP (2012$B)")
 
 gdp_manf_1
 ```
-Quickly, we can also plot the correlation between manufacturing employment and manufacturing gdp. 
 
-```{r}
+Similarly to manufacturing emploment, manufacturing GDP is dominated by the largest states; however, the delta between the larest states and the rest of the states appears to be larger than with manufacturing employment. 
+
+We can also plot the correlation between manufacturing employment and manufacturing gdp. 
+
+```{r, echo = FALSE}
 gdp_emp_2019 <- state_manf_2019 %>% 
   ggplot() + 
-  geom_point(shape = 21, aes(x = gdp_manf, y = emp), fill = brewer.pal(9, "Set3")[1], color = "black", size = 4, alpha = 0.7) + 
+  geom_point(shape = 21, aes(x = gdp_manf, y = emp, size = state_gdp), fill = brewer.pal(9, "Set3")[1], color = "black") + 
   scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-4)) + 
   scale_y_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3)) + 
   labs(x = "NAICS 31-33 Annual GDP in Billions of $2012", y = "NAICS 31-33 Average Monthly Employees, Thousands") + 
+  guides(size = "none") + 
   theme_bw()
 
-gdp_emp_2019 + geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.overlaps = 30) 
+gdp_emp_2019 + geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.overlaps = 30) + labs(title = "Manufacturing GDP and Employment Tightly Correlated")
 ```
 
 ## 2019 Manufacturing Share
@@ -356,20 +329,444 @@ We now turn to manufacturing share of the economy, beginning with GDP:
 
 ### 2019 Manufacturing Share (GDP)
 
-```{r}
+**The Southwest and Midwest Regions Have the Largest Share of Manufacturing GDP**
+
+```{r, echo = FALSE}
 gdp_manf_share <- build_map(state_gdp_2019, manf_gdp_share_perc, manf_gdp_share_clean, "BuPu", "Annual &#37 of State GDP", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Annual &#37 of State GDP")
 
 gdp_manf_share
 ```
+
+The Southwest and Midwest regions have particularly high shares of manufacturing GDP.
+
 ### 2019 Manufacturing Share (Employment)
 
-And also for employment. 
+**A similar set of states have high shares of manufacturing employment**
 
-```{r}
+```{r, echo = FALSE}
 emp_manf_share <- build_map(state_gdp_2019, manf_emp_share_perc, manf_emp_share_clean, "BuPu", " &#37 of State Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37 of State Employment")
 
 emp_manf_share
 ```
+Notably, the map of the manufacturing sector share of employment appears to be similar to the map of the manufacturing share of GDP, with a few states appearing to have a higher relative manufacturing share of employment than GDP. This suggests that some states might be considered "labor-intensive" manufacturing economies, as opposed to other states that might be considered more "capital-intensive." 
+
+# 2019 Industry Composition 
+
+We now turn to our industry composition data. Here, we are interested in both understanding which industries are dominant in a state, how these top industries vary across states, and how concentrated the states economy is in a few particular industries. To accomplish this, we will focus on the top 3-5 industries in the state, as well as construct a Herfindahl Hirschman index to measure concentration.
+
+We also read in employment data. 
+
+```{r}
+ind_emp_2019 <- readRDS(here("State Data/industry_emp.RDS"))
+```
+
+```{r}
+industry_titles <- read_csv(here("State Data/industry-titles.csv")) %>% 
+  filter(str_length(industry_code) == 3) %>% 
+  mutate(industry_code = as.numeric(industry_code))
+```
+
+
+
+We will perform some of our calculations in our state_ind dataset first, and then merge this dataset with our map. 
+
+```{r}
+state_ind_2019 <- state_ind %>% 
+  filter(year == 2019) %>% 
+  mutate(Description = str_remove(Description, "manufacturing")) %>% 
+  group_by(GeoName) %>% 
+  arrange(desc(manf_ind_gdp), .by_group = TRUE) %>% 
+  mutate(ind_tal = seq(n())) 
+```
+
+Exploring this dataset, we see that the dropoff in industry GDP between the "top" industry in a state, and the next highest industry can be quite steep (as in the case of Alaska), or more gradual (as in the case of Alabama)
+
+Interestingly, if we focus on only the top 3 manufacturing industries in a state, we get a list of 12 industries. Expanding this to top 4 gives us a list of 16 industries, 17 for 5, and 18 for 6. 
+
+```{r}
+state_ind_2019 %>% 
+  filter(ind_tal < 5) %>% 
+  ungroup() %>% 
+  count(Description)
+```
+
+
+To display our data in a map, we will remember the top line industry, and then create a variable that holds the description of the top 3 along with their industry GDPs. 
+
+```{r}
+ind_comp <- state_ind_2019 %>% 
+  group_by(GeoName) %>% 
+  mutate(ind_hhi = sum(ind_share_state**2, na.rm = TRUE)) %>% 
+  mutate(gdp_pretty = prettyNum(manf_ind_gdp, big.mark = ',',scientific=FALSE),
+    desc_3 = paste(
+    Description, ": ", gdp_pretty, "<br/>", 
+    lead(Description), ": ", lead(gdp_pretty), "<br/>", 
+    lead(Description, 2), ": ", lead(gdp_pretty, 2), sep = ""
+  ))
+```
+
+
+```{r}
+state_ind_2019_clean <- ind_comp %>% 
+  filter(ind_tal == 1) %>% 
+  rename(NAME = GeoName)
+```
+
+```{r}
+state_ind_2019_map <- left_join(states_leaflet, state_ind_2019_clean) %>% 
+  filter(!is.na(ind_hhi))
+```
+
+Now, because of differences in what we are trying to display, we will need to use new color and label defining functions to display our map. 
+
+```{r}
+#Define Colors
+ind_colors <- colorFactor(palette = brewer.pal(12, "Paired"), domain = state_ind_2019_map$Description)
+```
+
+```{r}
+#Define Labels
+
+ind_labels <- sprintf(
+  "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
+  state_ind_2019_map$NAME, state_ind_2019_map$ind_hhi, state_ind_2019_map$desc_3) %>% lapply(htmltools::HTML)
+```
+
+Having defined our color scale and labels, we can map our industry data. 
+
+**Consistent Pattern in Largest Manufacturing Industries by GDP**
+
+```{r, echo = FALSE}
+state_inds <- state_ind_2019_map %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~ind_colors(state_ind_2019_map$Description),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 1,
+    bringToFront = TRUE),
+  label = ind_labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>% 
+  addLegend(pal = ind_colors, values = state_ind_2019_map$Description, opacity = 0.7, title = "Highest State 3-Digit <br/>Manufacturing Subsector Annual GDP",
+  position = "bottomleft")
+
+state_inds
+```
+
+We see that there are some consistent patterns in the "dominant" industries across states, and that some of these patterns appear to be geographic as well (such as the chemical corridor in the Midwest extending East, and the Southwestern food and Beverage corridor)
+
+However, we also see that for some states, the delta between the top industry and the next highest industry is very high. This is not currently well displayed in the map, so we use a different figure to convey this information. 
+
+```{r, echo = FALSE, fig.width=11,fig.height=8}
+ind_comp_fig <- ind_comp %>% 
+  filter(ind_tal <=3) %>% 
+  rename(area_title = GeoName) %>% 
+  left_join(states) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  left_join(manf_data %>% filter(year == 2019) %>%  select(state_abbr, gdp_manf)) %>% 
+  ggplot() + 
+  geom_col(aes(x = manf_ind_gdp/gdp_manf, reorder(state_abbr, state_gdp), group = state_abbr, fill = Description), position = "stack", color = "black", alpha = 0.8) + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Sub-Industry Share of Manufacturing Economy (GDP)", y = "", fill = "", title = "Some States More Concentrated than Others") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(legend.position = "bottom")
+
+ind_comp_fig 
+```
+
+## Employment 
+
+We now look at industry employment by state. 
+
+```{r}
+state_ind_2019_emp <- ind_emp_2019 %>% 
+  left_join(industry_titles) %>% 
+  left_join(manf_data %>% 
+              filter(year == 2019) %>% 
+              select(area_title, manf_emp = emp, tot_emp)) %>% 
+  group_by(area_title) %>% 
+  arrange(desc(emp), .by_group = TRUE) %>% 
+  mutate(ind_tal_emp = seq(n())) %>% 
+  mutate(emp_share = emp/tot_emp,
+         pretty_emp = prettyNum(emp, big.mark = ',',scientific=FALSE), 
+    ind_hhi_emp = sum(emp_share**2, na.rm = TRUE), 
+    Description = str_remove(industry_title, "NAICS"),
+    Description = str_remove(Description, "manufacturing"),
+    desc_3 = paste(
+    Description, ": ", pretty_emp, "<br/>", 
+    lead(Description), ": ", lead(pretty_emp), "<br/>", 
+    lead(Description, 2), ": ", lead(pretty_emp, 2), sep = ""
+  )) 
+```
+
+```{r}
+state_ind_2019_emp %>% 
+  filter(ind_tal_emp < 4) %>% 
+  ungroup() %>% 
+  count(industry_title)
+```
+
+```{r}
+ind_emp_cols <- c(brewer.pal(11, "Paired"), brewer.pal(3, "Dark2"))
+```
+
+```{r}
+state_ind_emp_2019_map <- left_join(states_leaflet, state_ind_2019_emp %>% 
+                                   rename(NAME = area_title) %>% 
+                                     filter(ind_tal_emp == 1))%>% 
+  filter(!is.na(desc_3))
+```
+
+
+```{r}
+#Define Colors
+ind_colors_emp <- colorFactor(palette = ind_emp_cols, domain = state_ind_emp_2019_map$Description)
+```
+
+```{r}
+#Define Labels
+
+ind_labels_emp <- sprintf(
+  "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
+  state_ind_emp_2019_map$NAME, state_ind_emp_2019_map$ind_hhi_emp, state_ind_emp_2019_map$desc_3) %>% lapply(htmltools::HTML)
+```
+
+
+As above, we prepare a color scheme and popup for our map.
+
+**Dominant Manufacturing Sub-Industries by Employment Different than by GDP**
+
+```{r, echo = FALSE}
+state_inds_emp <- state_ind_emp_2019_map %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~ind_colors_emp(state_ind_emp_2019_map$Description),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 1,
+    bringToFront = TRUE),
+  label = ind_labels_emp,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) 
+
+state_inds_emp %>% 
+  addLegend(pal = ind_colors_emp, values = state_ind_emp_2019_map$Description, opacity = 0.7, title = "Highest State 3-Digit NAICS 31-33 <br/>Average Monthly Employees",
+  position = "bottomleft")
+```
+
+We see that the most dominant manufacturing sub-industry by employment is different than the most dominant sub-industry by GDP, again reflecting that certain manufacturing industries are labor intensive, and some are capital intensive. 
+
+```{r, fig.width=11,fig.height=8}
+ind_comp_emp <- state_ind_2019_emp %>% 
+  filter(ind_tal_emp < 4) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  rename(ind_emp = emp) %>% 
+  left_join(manf_data %>% filter(year == 2019) %>%  select(state_abbr, emp)) %>% 
+  ggplot() + 
+  geom_col(aes(x = ind_emp/emp, reorder(state_abbr, tot_emp), group = state_abbr, fill = Description), position = "stack", color = "black") + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Industry Share of Manufacturing Economy \n(Employment)", y = "", fill = "", title = "For most states, manufacturign employment is more evenly distributed across industries") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(legend.position = "bottom") 
+
+ind_comp_emp
+```
+
+
+We might then want to look at how the state HHI index corresponds with its "max" location quotient, which would be the industry in the state that the state has the largest share of, relative to the national average. 
+
+```{r, fig.width=11,fig.height=8}
+state_ind %>% 
+  mutate(ind_share_state_sq = ind_share_state**2) %>% 
+  group_by(area_fips) %>% 
+  reframe(hhi_ind = sum(ind_share_state_sq, na.rm = TRUE), max_ind_lq = max(ind_lq)) %>% 
+  left_join(area_codes) %>% 
+  filter(!is.na(area_fips)) %>% 
+  ggplot() + 
+  geom_point(aes(hhi_ind, max_ind_lq), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
+  geom_text_repel(aes(hhi_ind, max_ind_lq, label = state_abbr), max.overlap = 25) + 
+  theme_bw() + 
+  labs(x = "State Manufacturing GDP by Industry HHI", y = "State Maximum Industry Manufacturing Location Quotient", title = "Some states are more concentrated than others") + 
+  axis_theme
+```
+
+# 2019 County Data
+
+Note: For now, we will use county employment data to measure the geographical composition of manufacturing across the US. In the future, we will want to change this to GDP data. 
+
+```{r}
+county_emp_2019 <- county_emp %>% 
+  filter(year == 2019) %>% 
+  mutate(COUNTYFP = substr(area_fips, start = 3, stop = str_length(area_fips))) %>% 
+  rename(STATEFP = st) %>% 
+  filter(disclosure_code != "N")
+```
+
+```{r}
+county_emp_map_2019 <- left_join(
+  county_leaflet %>% 
+    mutate(STATEFP = as.numeric(STATEFP)), county_emp_2019
+)
+```
+
+
+With our mapping dataset constructed, we start by displaying manufacturing employment levels for each county. 
+
+
+As before, we want to construct our color palette and label for the map. Fortunately we can use our previous function for colors. 
+
+```{r}
+county_cols <- col_def(county_emp_map_2019, emp, brewer.pal(9, "Spectral"))
+```
+
+```{r}
+county_labels <- sprintf(
+  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Average Monthly Employees <br/> <i> NAICS 31-33 </i>",
+  county_emp_map_2019$STATE_NAME, county_emp_map_2019$NAME, county_emp_map_2019$emp) %>% lapply(htmltools::HTML)
+```
+
+
+```{r}
+county_emp_levels <- county_emp_map_2019 %>% 
+  leaflet() %>% 
+  setView(-97.59211, 37.91239, zoom = 4) %>% 
+  addPolygons(
+  fillColor = ~county_cols(county_emp_map_2019$emp),
+  weight = 1,
+  opacity = 0.5,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = county_labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>% 
+  addLegend(pal = county_cols, values = county_emp_map_2019$emp, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Average Monthly Employees",
+  position = "bottomleft")
+
+county_emp_levels
+```
+
+Having established basic levels, we now turn to investigate the county's share of state employment. 
+
+```{r}
+county_2019_share <- county_emp_map_2019 %>% 
+  left_join(manf_data %>% filter(year == 2019) %>% select(tot_emp, area_title)) %>% 
+  mutate(emp_share = emp/tot_emp, 
+         emp_share_perc = emp_share*100,
+         emp_share_perc_clean = paste(round(emp_share_perc, 2), "&#37"))
+```
+
+Again, we define colors and labels. 
+
+```{r}
+county_cols_share <- col_def(county_2019_share, emp_share, brewer.pal(9, "Spectral"))
+```
+
+```{r}
+county_labels_share <- sprintf(
+  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Share of State Employment <br/> <i> NAICS 31-33 </i>",
+  county_2019_share$STATE_NAME, county_2019_share$NAME, county_2019_share$emp_share_perc_clean) %>% lapply(htmltools::HTML)
+```
+
+```{r}
+county_emp_share <- county_2019_share %>% 
+  leaflet() %>% 
+  setView(-97.59211, 37.91239, zoom = 4) %>% 
+  addPolygons(
+  fillColor = ~county_cols_share(county_2019_share$emp_share),
+  weight = 1,
+  opacity = 0.5,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = county_labels_share,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))  %>% 
+  addLegend(pal = county_cols_share, values = county_2019_share$emp_share, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Share of State Employment",
+  position = "bottomleft")
+
+county_emp_share
+```
+
+We then display county employment location quotients following the same process as above. 
+
+```{r}
+county_cols_lq <- col_def(county_2019_share, lq_emp, brewer.pal(9, "Spectral"))
+```
+
+```{r}
+county_labels_lq <- sprintf(
+  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Employment Location Quotient <br/> <i> NAICS 31-33 </i>",
+  county_2019_share$STATE_NAME, county_2019_share$NAME, county_2019_share$lq_emp) %>% lapply(htmltools::HTML)
+```
+
+
+```{r}
+county_emp_lq <- county_2019_share %>% 
+  leaflet() %>% 
+  setView(-97.59211, 37.91239, zoom = 4) %>% 
+  addPolygons(
+  fillColor = ~county_cols_lq(county_2019_share$lq_emp),
+  weight = 1,
+  opacity = 0.5,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = county_labels_lq,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto"))  %>% 
+  addLegend(pal = county_cols_lq, values = county_2019_share$lq_emp, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Employment Location Quotient",
+  position = "bottomleft")
+
+county_emp_lq
+```
+
+
 
 # Trends
 
@@ -457,6 +854,8 @@ trends_data_2010_2019 <- state_manf %>%
 
 ## 2010-2019 GDP % Change
 
+**Western states saw the highest percent change in annual GDP, few states shrink**
+
 ```{r}
 gdp_change_2010_2019 <- build_map(trends_data_2010_2019, gdp_manf_perc, gdp_manf_perc_clean, "YlOrRd", " &#37 Change in Annual GDP", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37  Change in Annual GDP, <br/> 2010-2019")
 
@@ -465,25 +864,28 @@ gdp_change_2010_2019
 
 ## 2010-2019 Emp % Change
 
+**Almost all states see positive changes in manufacturing employment, regionally different than manufacturing GDP**
+
 ```{r}
 emp_change_2010_2019 <- build_map(trends_data_2010_2019, emp_perc, emp_perc_clean, "YlOrRd", " &#37 Change in Avg Monthly Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37  Change in <br/> Avg Monthly Employment <br/> 2010-2019")
 
 emp_change_2010_2019
 ```
 
-
 We can also then examine the corrleation between percentage change in NAICS 31-33 employment and percentage change in GDP. 
 
-```{r}
+```{r, fig.width=11,fig.height=8}
 gdp_emp_trends <- trends_data_2010_2019 %>% 
   rename(area_title = NAME) %>% 
   left_join(area_codes) %>% 
+  left_join(manf_data %>% filter(year == 2019) %>% select(state_abbr, state_gdp)) %>% 
   ggplot() + 
-  geom_point(aes(emp_perc, gdp_manf_perc)) + 
+  geom_point(aes(emp_perc, gdp_manf_perc, size = state_gdp), shape = 21, alpha = 0.7, color = "black", fill = brewer.pal(9, "Set3")[1]) + 
   geom_text_repel(aes(emp_perc, gdp_manf_perc, label = state_abbr)) + 
   labs(x = "2010 to 2019 Percent Change in NAICS 31-33 Employment", y = "2010 to 2019 Percent Change in NAICS 31-33 GDP") + 
   theme_bw() + 
-  axis_theme
+  axis_theme + 
+  guides(size = "none")
 
 gdp_emp_trends
 ```
@@ -493,10 +895,6 @@ We now want to benchmark changes in the manufacturing sector against changes in 
 
 We begin with a summary graph of the trend we are attempting to show. 
 
-```{r}
-manf_col <- brewer.pal(9, "Set3")[5]
-total_col <- "#A5764D"
-```
 
 ```{r}
 trends_map_2010_2019 <- trends_data_2010_2019 %>% 
@@ -522,7 +920,7 @@ state_change <- trends_map_2010_2019 %>%
   geom_hline(yintercept = 0, color = "black") + 
   guides(fill = "none", color = "none") + 
   scale_color_manual(values = c(total_col, manf_col))+
-  labs(x = "", y = "Percent Change in GDP, 2010 - 2019") + 
+  labs(x = "", y = "Percent Change in GDP, 2010 - 2019", title = "Certain States see Manufacturing sector grow faster than the State Economy") + 
   coord_flip() + 
   theme_bw() + 
   axis_theme
@@ -538,12 +936,13 @@ state_manf_gdp <- trends_map_2010_2019 %>%
   ggplot() + 
   geom_hline(yintercept = 0)+ 
   geom_vline(xintercept = 0) + 
-  geom_point(aes(state_gdp_perc, gdp_manf_perc, size = state_gdp, fill = manf_state_dif), shape = 21, color = "black") + 
-  scale_fill_gradient(low = total_col, high = manf_col) + 
+  geom_point(aes(state_gdp_perc, gdp_manf_perc, size = state_gdp, fill = manf_sign), shape = 21, color = "black") + 
+  scale_fill_manual(values = c(total_col, manf_col))+
   geom_text_repel(aes(state_gdp_perc, gdp_manf_perc, label = state_abbr)) +
   guides(fill = "none", size = "none") + 
   theme_bw() + 
-  labs(x = "% Change in Annual GDP, 2010-2019 \n All Industries", y = "% Change in Annual GDP, 2010-2019 \n NAICS 31-33")
+  labs(x = "% Change in Annual GDP, 2010-2019 \n All Industries", y = "% Change in Annual GDP, 2010-2019 \n NAICS 31-33", title = "Blue: Manf GDP Grows Faster than State GDP; Brown: State GDP grows faster than Manf GDP ") + 
+  axis_theme
 
 state_manf_gdp
   
@@ -601,369 +1000,4 @@ state_manf_2010_2019 <- trends_map_2010_2019 %>%
 state_manf_2010_2019
 ```
 
-# 2019 Industry Composition 
-
-We now turn to our industry composition data. Here, we are interested in both understanding which industries are dominant in a state, how these top industries vary across states, and how concentrated the states economy is in a few particular industries. To accomplish this, we will focus on the top 3-5 industries in the state, as well as construct a Herfindahl Hirschman index to measure concentration.
-
-We also read in employment data. 
-
-```{r}
-ind_emp_2019 <- readRDS(here("State Data/industry_emp.RDS"))
-```
-
-```{r}
-industry_titles <- read_csv(here("State Data/industry-titles.csv")) %>% 
-  filter(str_length(industry_code) == 3) %>% 
-  mutate(industry_code = as.numeric(industry_code))
-```
-
-
-
-We will perform some of our calculations in our state_ind dataset first, and then merge this dataset with our map. 
-
-```{r}
-state_ind_2019 <- state_ind %>% 
-  filter(year == 2019) %>% 
-  mutate(Description = str_remove(Description, "manufacturing")) %>% 
-  group_by(GeoName) %>% 
-  arrange(desc(manf_ind_gdp), .by_group = TRUE) %>% 
-  mutate(ind_tal = seq(n())) 
-```
-
-Exploring this dataset, we see that the dropoff in industry GDP between the "top" industry in a state, and the next highest industry can be quite steep (as in the case of Alaska), or more gradual (as in the case of Alabama)
-
-Interestingly, if we focus on only the top 3 manufacturing industries in a state, we get a list of 12 industries. Expanding this to top 4 gives us a list of 16 industries, 17 for 5, and 18 for 6. 
-
-```{r}
-state_ind_2019 %>% 
-  filter(ind_tal < 5) %>% 
-  ungroup() %>% 
-  count(Description)
-```
-
-
-To display our data in a map, we will remember the top line industry, and then create a variable that holds the description of the top 3 along with their industry GDPs. 
-
-```{r}
-state_ind_2019_clean <- state_ind_2019 %>% 
-  group_by(GeoName) %>% 
-  mutate(ind_hhi = sum(ind_share_state**2, na.rm = TRUE)) %>% 
-  mutate(gdp_pretty = prettyNum(manf_ind_gdp, big.mark = ',',scientific=FALSE),
-    desc_3 = paste(
-    Description, ": ", gdp_pretty, "<br/>", 
-    lead(Description), ": ", lead(gdp_pretty), "<br/>", 
-    lead(Description, 2), ": ", lead(gdp_pretty, 2), sep = ""
-  )) %>%
-  filter(ind_tal == 1) %>% 
-  rename(NAME = GeoName)
-```
-
-```{r}
-state_ind_2019_map <- left_join(states_leaflet, state_ind_2019_clean) %>% 
-  filter(!is.na(ind_hhi))
-```
-
-Now, because of differences in what we are trying to display, we will need to use new color and label defining functions to display our map. 
-
-```{r}
-#Define Colors
-ind_colors <- colorFactor(palette = brewer.pal(12, "Paired"), domain = state_ind_2019_map$Description)
-```
-
-```{r}
-#Define Labels
-
-ind_labels <- sprintf(
-  "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
-  state_ind_2019_map$NAME, state_ind_2019_map$ind_hhi, state_ind_2019_map$desc_3) %>% lapply(htmltools::HTML)
-```
-
-Having defined our color scale and labels, we can map our industry data. 
-
-```{r}
-state_inds <- state_ind_2019_map %>% 
-  leaflet() %>% 
-  addPolygons(
-  fillColor = ~ind_colors(state_ind_2019_map$Description),
-  weight = 2,
-  opacity = 1,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 1,
-    bringToFront = TRUE),
-  label = ind_labels,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto")) %>% 
-  addLegend(pal = ind_colors, values = state_ind_2019_map$Description, opacity = 0.7, title = "Highest State 3-Digit <br/>Manufacturing Subsector Annual GDP",
-  position = "bottomleft")
-
-state_inds
-```
-
-## Employment 
-
-We now look at industry employment by state. 
-
-```{r}
-state_ind_2019_emp <- ind_emp_2019 %>% 
-  left_join(industry_titles) %>% 
-  left_join(manf_data %>% 
-              filter(year == 2019) %>% 
-              select(area_title, manf_emp = emp, tot_emp)) %>% 
-  group_by(area_title) %>% 
-  arrange(desc(emp), .by_group = TRUE) %>% 
-  mutate(ind_tal_emp = seq(n())) %>% 
-  mutate(emp_share = emp/tot_emp,
-         pretty_emp = prettyNum(emp, big.mark = ',',scientific=FALSE), 
-    ind_hhi_emp = sum(emp_share**2, na.rm = TRUE), 
-    Description = str_remove(industry_title, "NAICS"),
-    Description = str_remove(Description, "manufacturing"),
-    desc_3 = paste(
-    Description, ": ", pretty_emp, "<br/>", 
-    lead(Description), ": ", lead(pretty_emp), "<br/>", 
-    lead(Description, 2), ": ", lead(pretty_emp, 2), sep = ""
-  )) 
-```
-
-```{r}
-state_ind_2019_emp %>% 
-  filter(ind_tal_emp < 4) %>% 
-  ungroup() %>% 
-  count(industry_title)
-```
-
-```{r}
-ind_emp_cols <- c(brewer.pal(11, "Paired"), brewer.pal(3, "Dark2"))
-```
-
-```{r}
-state_ind_emp_2019_map <- left_join(states_leaflet, state_ind_2019_emp %>% 
-                                   rename(NAME = area_title) %>% 
-                                     filter(ind_tal_emp == 1))%>% 
-  filter(!is.na(desc_3))
-```
-
-
-```{r}
-#Define Colors
-ind_colors_emp <- colorFactor(palette = ind_emp_cols, domain = state_ind_emp_2019_map$Description)
-```
-
-```{r}
-#Define Labels
-
-ind_labels_emp <- sprintf(
-  "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
-  state_ind_emp_2019_map$NAME, state_ind_emp_2019_map$ind_hhi_emp, state_ind_emp_2019_map$desc_3) %>% lapply(htmltools::HTML)
-```
-
-
-As above, we prepare a color scheme and popup for our map.
-
-```{r}
-state_inds_emp <- state_ind_emp_2019_map %>% 
-  leaflet() %>% 
-  addPolygons(
-  fillColor = ~ind_colors_emp(state_ind_emp_2019_map$Description),
-  weight = 2,
-  opacity = 1,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 1,
-    bringToFront = TRUE),
-  label = ind_labels_emp,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto")) 
-
-state_inds_emp %>% 
-  addLegend(pal = ind_colors_emp, values = state_ind_emp_2019_map$Description, opacity = 0.7, title = "Highest State 3-Digit NAICS 31-33 <br/>Average Monthly Employees",
-  position = "bottomleft")
-```
-
-
-We might then want to look at how the state HHI index corresponds with its "max" location quotient, which would be the industry in the state that the state has the largest share of, relative to the national average. 
-
-```{r}
-state_ind %>% 
-  mutate(ind_share_state_sq = ind_share_state**2) %>% 
-  group_by(area_fips) %>% 
-  reframe(hhi_ind = sum(ind_share_state_sq, na.rm = TRUE), max_ind_lq = max(ind_lq)) %>% 
-  left_join(area_codes) %>% 
-  filter(!is.na(area_fips)) %>% 
-  ggplot() + 
-  geom_point(aes(hhi_ind, max_ind_lq), shape = 21, size = 4, color = "black", fill = manf_col, alpha = 0.8) + 
-  geom_text_repel(aes(hhi_ind, max_ind_lq, label = state_abbr), max.overlap = 25) + 
-  theme_bw() + 
-  labs(x = "State Manufacturing GDP by Industry HHI", y = "State Maximum Industry Manufacturing Location Quotient") + 
-  axis_theme
-```
-
-# 2019 County Data
-
-Note: For now, we will use county employment data to measure the geographical composition of manufacturing across the US. In the future, we will want to change this to GDP data. 
-
-```{r}
-county_emp_2019 <- county_emp %>% 
-  filter(year == 2019) %>% 
-  mutate(COUNTYFP = substr(area_fips, start = 3, stop = str_length(area_fips))) %>% 
-  rename(STATEFP = st) %>% 
-  filter(disclosure_code != "N")
-```
-
-```{r}
-county_emp_map_2019 <- left_join(
-  county_leaflet %>% 
-    mutate(STATEFP = as.numeric(STATEFP)), county_emp_2019
-)
-```
-
-
-With our mapping dataset constructed, we start by displaying manufacturing employment levels for each county. 
-
-
-As before, we want to construct our color palette and label for the map. Fortunately we can use our previous function for colors. 
-
-```{r}
-county_cols <- col_def(county_emp_map_2019, emp, brewer.pal(9, "Spectral"))
-```
-
-```{r}
-county_labels <- sprintf(
-  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Average Monthly Employees <br/> <i> NAICS 31-33 </i>",
-  county_emp_map_2019$STATE_NAME, county_emp_map_2019$NAME, county_emp_map_2019$emp) %>% lapply(htmltools::HTML)
-```
-
-
-```{r}
-county_emp_levels <- county_emp_map_2019 %>% 
-  leaflet() %>% 
-  setView(-97.59211, 37.91239, zoom = 4) %>% 
-  addPolygons(
-  fillColor = ~county_cols(county_emp_map_2019$emp),
-  weight = 1,
-  opacity = 0.5,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 0.7,
-    bringToFront = TRUE),
-  label = county_labels,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto")) %>% 
-  addLegend(pal = county_cols, values = county_emp_map_2019$emp, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Average Monthly Employees",
-  position = "bottomleft")
-
-county_emp_levels
-```
-Having established basic levels, we now turn to investigate the county's share of state employment. 
-
-```{r}
-county_2019_share <- county_emp_map_2019 %>% 
-  left_join(manf_data %>% filter(year == 2019) %>% select(tot_emp, area_title)) %>% 
-  mutate(emp_share = emp/tot_emp, 
-         emp_share_perc = emp_share*100,
-         emp_share_perc_clean = paste(round(emp_share_perc, 2), "&#37"))
-```
-
-Again, we define colors and labels. 
-
-
-```{r}
-county_cols_share <- col_def(county_2019_share, emp_share, brewer.pal(9, "Spectral"))
-```
-
-```{r}
-county_labels_share <- sprintf(
-  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Share of State Employment <br/> <i> NAICS 31-33 </i>",
-  county_2019_share$STATE_NAME, county_2019_share$NAME, county_2019_share$emp_share_perc_clean) %>% lapply(htmltools::HTML)
-```
-
-```{r}
-county_emp_share <- county_2019_share %>% 
-  leaflet() %>% 
-  setView(-97.59211, 37.91239, zoom = 4) %>% 
-  addPolygons(
-  fillColor = ~county_cols_share(county_2019_share$emp_share),
-  weight = 1,
-  opacity = 0.5,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 0.7,
-    bringToFront = TRUE),
-  label = county_labels_share,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto"))  %>% 
-  addLegend(pal = county_cols_share, values = county_2019_share$emp_share, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Share of State Employment",
-  position = "bottomleft")
-
-county_emp_share
-```
-
-We then display county employment location quotients following the same process as above. 
-
-```{r}
-county_cols_lq <- col_def(county_2019_share, lq_emp, brewer.pal(9, "Spectral"))
-```
-
-```{r}
-county_labels_lq <- sprintf(
-  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Employment Location Quotient <br/> <i> NAICS 31-33 </i>",
-  county_2019_share$STATE_NAME, county_2019_share$NAME, county_2019_share$lq_emp) %>% lapply(htmltools::HTML)
-```
-
-
-```{r}
-county_emp_lq <- county_2019_share %>% 
-  leaflet() %>% 
-  setView(-97.59211, 37.91239, zoom = 4) %>% 
-  addPolygons(
-  fillColor = ~county_cols_lq(county_2019_share$lq_emp),
-  weight = 1,
-  opacity = 0.5,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 0.7,
-    bringToFront = TRUE),
-  label = county_labels_lq,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto"))  %>% 
-  addLegend(pal = county_cols_lq, values = county_2019_share$lq_emp, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Employment Location Quotient",
-  position = "bottomleft")
-
-county_emp_lq
-```
 

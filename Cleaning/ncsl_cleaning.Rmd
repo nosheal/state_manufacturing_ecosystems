@@ -91,6 +91,107 @@ ncsl_state <- ncsl_clean %>%
   summarize(total_dollars = sum(dollars_spent))
 ```
 
+# Pandemic Oversight CRF Data
+
+In addition, we were able to find a new, far more detailed database of state use of CRF. These data are taken from a government website, [Pandemic Oversight](https://www.pandemicoversight.gov/data-interactive-tools/interactive-dashboards/coronavirus-relief-fund), which provides a detailed breakdown of specific awards related to the Coronavirus Relief Fund. 
+
+We start by importing and cleaning data frames, beginning with a state overview. 
+
+```{r}
+project_details <- read.csv(here("CRF/Project Details.csv"))
+```
+
+```{r}
+crf_payments <- read_xlsx(here("CRF/crf_payments.xlsx"))
+```
+
+```{r}
+crf_payments %>% 
+  filter(!is.na(Amount)) %>% 
+  filter(str_detect(State_Local, "Payment to |Total allocation", negate = TRUE)) %>% 
+    view()
+```
+
+
+
+```{r}
+ppe_projects <- project_details %>% 
+  filter(str_detect(Project.description, "PPE")) %>% 
+  group_by(Sub.recipient, Award.number) %>% 
+  reframe(award_dollars = sum(Sub.award.amount), spent_dollars = sum(Money.spent.to.date), Project.description, Award.description, Spending.category) %>% 
+  filter(str_detect(Spending.category, "Select", negate = TRUE))
+```
+
+
+```{r}
+ppe_projects %>% 
+  group_by(Spending.category) %>% 
+  count()
+```
+
+```{r}
+token_list_broad <- c("Unemployment Benefits", "facilitate Distance Learning", "Food Programs", "Housing Support", "Improve Telework Capabilites of Public Employees")
+```
+
+```{r}
+ppe_projects_short <- ppe_projects %>% 
+  filter(!Spending.category %in% token_list_broad)
+```
+
+
+Bring in mask data to check against. 
+
+```{r}
+box_dir <- "/Users/Nosheal/Library/CloudStorage/Box-Box/COVID 19 Master Folder/Data/Masks/"
+```
+
+```{r}
+box_here <- function(file) { 
+  paste(box_dir, file, sep = "")
+  }
+```
+
+
+```{r}
+mask_sample <- readRDS(box_here("final_sample.RDS"))
+```
+
+```{r}
+mask_sample %>% 
+  mutate(corp_category = case_when(
+    `date founded` < 2020 ~ "Diversifying", 
+    `date founded` >= 2020 ~ "De_Novo"
+  )) %>% 
+  mutate(corp_cateogry = case_when(
+    fda_incumbent == 1 | niosh_incumbent == 1 ~ "Incumbent", 
+    is.na(`date founded`) ~ "Unknown", 
+    TRUE ~ corp_category
+  ))
+```
+
+```{r}
+remove <- c("Limited" ,"Ltd", "LTD", "Incorporated", "Company",  "Corporation", "Co", "Inc",  "[[:punct:]]", "LLC", "INC")
+```
+
+
+```{r}
+mask_comps <- mask_sample %>% 
+  select(dom_useful_num, original_company_name) %>% 
+    mutate(comp_match = tolower(str_trim(str_remove_all(original_company_name, paste(remove, collapse = "|")))))
+```
+
+```{r}
+ppe_projects_short %>% 
+  select(Sub.recipient) %>% 
+  distinct() %>% 
+  mutate(comp_match = tolower(str_trim(str_remove_all(Sub.recipient, paste(remove, collapse = "|"))))) %>% 
+  left_join(mask_comps) %>% 
+  view()
+  
+```
+
+~  15/3000 matches 
+
 ## QCEW Data 
 
 ```{r}
