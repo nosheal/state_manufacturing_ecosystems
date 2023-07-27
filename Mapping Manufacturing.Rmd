@@ -9,9 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-In this document, we will use previously cleaned data to map manufacturing activity. 
+This is a document to provide some basic context about the US Manufacturing Economy in 2019. 
 
-We start by loading our packages and datasets.
+**Summary**: Nationally, the manufacturing share of the economy, measured both in terms of employment and GDP, has been declining since 2010. At the state level, we a far more heterogenous manufacturing economy: in some states, the manufacturing sector outpacing state GDP and employment growth between 2010 and 2019; in others, the manufacturing sector lags
 
 ```{r, include = FALSE}
 library(tigris)

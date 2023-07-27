@@ -1,0 +1,1209 @@
+---
+title: "CRF Summary"
+author: "Nikhil Kalathil"
+date: "2023-07-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+states <- data.frame(state_abbr = state.abb, state_name = state.name)
+```
+
+```{r, include == FALSE }
+library(tidyverse)
+library(tidytext)
+library(RColorBrewer)
+library(ggthemes)
+library(here)
+library(ggrepel)
+library(lubridate)
+library(ggnewscale)
+library(readxl)
+library(patchwork)
+library(ggridges)
+#library(htmltools)
+#library(htmlwidgets)
+#library(RJSONIO)
+```
+
+
+```{r}
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+We were able to find a new, far more detailed database of state use of CRF. These data are taken from a government website, [Pandemic Oversight](https://www.pandemicoversight.gov/data-interactive-tools/interactive-dashboards/coronavirus-relief-fund), which provides a detailed breakdown of specific awards related to the Coronavirus Relief Fund. 
+
+# Data Imports 
+
+We start by importing and cleaning data frames, beginning with a state overview. We also load in our previously constructed and cleaned data about manufacturing economic activity. 
+
+```{r}
+project_details <- read.csv(here("CRF/Project Details.csv"))
+```
+
+```{r}
+prime_recipients <- read.csv(here("CRF/prime_recipients.csv"))
+```
+
+```{r}
+project_finaces <- read.csv(here("CRF/project_finances.csv"))
+```
+
+```{r}
+state_summary <- read_xlsx(here("CRF/state_summary.xlsx"))
+```
+
+```{r}
+manf_data <- readRDS(here("State Data/manf_clean.RDS"))
+```
+
+# State Overviews
+
+We start by looking at how much the federal government reports state recieved. 
+
+```{r}
+crf_payments <- read_xlsx(here("CRF/crf_payments.xlsx"))
+```
+
+```{r}
+crf_feds <- crf_payments %>% 
+  filter(!is.na(Amount)) %>% 
+  filter(str_detect(State_Local, "Payment to |Total allocation")) %>% 
+  pivot_wider(names_from = State_Local, values_from = Amount) %>% 
+  mutate(`Total allocation` = case_when(
+    is.na(`Total allocation`) ~ `Total allocation and payment to the state`, 
+    TRUE ~ `Total allocation`),
+    `Payment to the state` = case_when(
+    is.na(`Payment to the state`) ~ `Total allocation and payment to the state`,
+    TRUE ~ `Payment to the state`)) %>% 
+  select(state_name = State, state_payment = `Payment to the state`, state_total_allocation = `Total allocation`) %>% 
+  left_join(states)
+```
+
+
+The first column gives us how much money went directly to states, and the second the total amount that states received. 
+
+We can then compare this against what states report they spend, across specific spending categories. 
+
+For our state overview, we separate out county payments from state payments, noting that we don't do this completely correctly for Alaska, and create a data frame that contains 1) the total amount the state received from the federal government, and 2) how the state spent the funds across a few categories of spending. 
+
+We start with the total amount of money that states report allocating, separating out the payment that went to the states from the payment that went to counties within the state. 
+
+```{r}
+state_sum <- crf_feds %>% 
+  left_join(states) %>% 
+  ggplot() + 
+   geom_col(aes(x = reorder(state_abbr, state_payment), y = state_total_allocation), fill = brewer.pal(7, "Set3")[4], color = "black", alpha = 0.8) +
+  geom_col(aes(x = reorder(state_abbr, state_payment), y = state_payment), fill = "lightgrey", color = "black", alpha = 0.8) +
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) + 
+  coord_flip() + 
+    labs(y = "Total $ Received from Cornavirus Relief Fund (CRF)", x = "") + 
+  theme_bw() + 
+  axis_theme
+
+state_sum
+```
+
+From here, we turn to the aggregate database of how states report spending the funds allocated to them. 
+
+## Categories of State Spending
+
+We start by cleaning this dataset and examining the distribution of how staets and counties report spending their money. 
+
+```{r}
+state_summary_long <- state_summary %>% 
+  pivot_longer(cols = -c(1:5), names_to = "spending_category", values_to = "spending_amount") %>% 
+  mutate(city_county = case_when(
+    str_detect(`Prime Recipient`, "CITY OF|TOWN|COUNTY") ~ "county_spending", 
+    str_detect(`Prime Recipient`, "CITY OF|TOWN|COUNTY", negate = TRUE ) ~ "state_spending"), 
+    city_county = case_when(
+      State == "AK" & str_detect(`Prime Recipient`, "DEPT", negate = TRUE) ~ "not_state", 
+      TRUE ~ city_county )) %>% 
+  rename(payment_amount = `Payment Amount`) 
+```
+
+Curiously, we see that some of the values that states report are less than 0. It is unclear exactly what is going on with these payments, so we will leave them alone for now, but create a dataframe to store their values in case we need to check them again.
+
+```{r}
+state_crf_neg <- state_summary_long %>% 
+  filter(spending_amount < 0)
+```
+
+We now take our data and sum over each of the spending categories, separating out how counties and cities report spending their allocations, from how states report spending their allocations. 
+
+```{r}
+state_crf_clean <- state_summary_long %>% 
+  group_by(State, spending_category, city_county, payment_amount) %>%
+  reframe(total_spending = sum(spending_amount), number_of_recipients = n()) %>% 
+  group_by(State, spending_category, city_county) %>% 
+  reframe(total_payment = max(payment_amount), total_spending = sum(total_spending)) %>% 
+  pivot_wider(names_from = city_county, values_from = total_spending) %>% 
+  rename(state_abbr = State) %>% 
+  filter(!is.na(state_abbr))
+```
+
+With this data, we can now get a count of the total amount of money that each state and county received, as well as the categories that they spent their money on. First, we compare the total amount that states report spending with the total amount that states were allocated. 
+
+```{r}
+state_crf_clean %>% 
+  select(state_abbr, total_payment) %>% 
+  distinct() %>% 
+  group_by(state_abbr) %>% 
+  mutate(state_pay = max(total_payment), 
+         state_county = case_when(
+           state_pay > total_payment ~ "City and Counties", 
+           TRUE ~ "State"
+         )) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  left_join(states) %>% 
+  left_join(crf_feds) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  mutate(diff = state_payment - state_pay) %>% 
+  view()
+```
+
+We see that in general, the amount that states report spending in total match with the total payment to the state; however, the amount that counties report spending do not add to the total state allocation. 
+
+Using state provided data about how states spend their money, we can examine a breakdown of how funds are allocated across distinct spending categories.
+
+```{r}
+unknown_spend <- function(data){
+  data %>% 
+  mutate(spending_percent = state_spending/state_payment) %>% 
+  group_by(state_abbr) %>% 
+  mutate(state_pay = max(total_payment), 
+         state_county = case_when(
+           state_pay >= total_payment ~ "City and Counties", 
+           TRUE ~ "State"
+         )) %>% 
+  filter(!is.na(state_abbr), state_county == "State") %>% 
+  mutate(state_spend = sum(state_spending, na.rm = TRUE)) %>% 
+    mutate(unknown = state_payment - state_spend, 
+           spending_percent = unknown / total_payment) %>% 
+    select(state_abbr, state_spending = unknown, state_payment, spending_percent, state_pay) %>% 
+    distinct() %>% 
+    mutate(spending_category = "Unknown")
+}
+```
+
+Because the federal dataset does not have information about US territories we create another dataframe to hold these values. 
+
+
+```{r}
+crf_territories <- state_crf_clean %>% 
+  left_join(states) %>% 
+  anti_join(crf_feds) %>% 
+  mutate(state_payment = total_payment)
+```
+
+
+```{r}
+crf_territory_sum <- crf_territories %>% 
+  select(state_abbr, state_payment) %>% 
+  mutate(state_total_allocation = state_payment) %>% 
+  distinct()
+```
+
+
+```{r}
+crf_feds_all <- crf_feds %>% 
+  bind_rows(crf_territory_sum)
+```
+
+```{r}
+state_crf_spending <- state_crf_clean %>% 
+  left_join(states) %>% 
+  left_join(crf_feds, .) %>% 
+  bind_rows(crf_territories) %>% 
+  mutate(spending_percent = state_spending/state_payment,
+         state_county = case_when(
+           state_payment < total_payment ~ "City and Counties", 
+           TRUE ~ "State"
+         )) %>% 
+  group_by(state_abbr) %>% 
+  filter(!is.na(state_abbr), state_county == "State", !is.na(state_county)) %>% 
+  mutate(state_spend = sum(state_spending, na.rm = TRUE)) 
+```
+
+```{r}
+cat_scale <- c(brewer.pal(12, "Paired"), brewer.pal(3, "Spectral")[1:2], brewer.pal(3, "Set1")[1], brewer.pal(3, "Dark2"), "lightgrey", brewer.pal(3, "Set2")[2])
+```
+
+
+```{r}
+state_crf_cats <- state_crf_spending %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, state_payment), y = spending_percent, fill = spending_category), color = "black", alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = cat_scale)+
+  coord_flip() + 
+    labs(y = "Total $ Received from Cornavirus Relief Fund (CRF)", x = "", fill = "Spending Category") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+graph_2_nolab <- state_crf_cats + 
+  guides(fill = "none")
+
+```
+
+
+```{r}
+state_crf_cats
+```
+
+
+We see that not all of the allocated state funds are accounted for in a specific spending categories, even including "All items listed above". 
+
+In addition, while some PPE related expenditures are outside of the PPE spending category, we can focus on this category to get a sense of how much of their total allocation states spent on PPE. 
+
+```{r}
+state_crf_spending %>% 
+  filter(spending_category == "Personal protective equipment") %>%  
+  ggplot() + 
+  geom_col(aes(x = reorder(state_abbr, state_payment), y = spending_percent), color = "black", alpha = 0.8, fill = brewer.pal(9, "Set1")[1]) +
+  scale_y_continuous(labels = scales::percent) + 
+  coord_flip() + 
+  theme_bw() + 
+  labs(y = "Percent Spent on Personal Protective Equipment", x = "") + 
+  axis_theme 
+```
+
+We see that in general, states vary substantially in the percent of their allocated funds that the spend on personal protective equipment expenditures; however, this aggregate picture is still not perfectly clear. 
+
+# Individual Contract Data
+
+We can then compare this aggregate summary of spending against a summation over a more granular approach using individual contract data. 
+
+## Prime Recipients
+
+We start with looking at the prime recipients of contracts to states.
+
+```{r}
+prime_states <- prime_recipients %>% 
+  mutate(state_abbr = str_sub(Prime.recipient, -6)) %>% 
+  mutate(Prime.recipient = str_trim(str_remove_all(str_remove(Prime.recipient, state_abbr), "[:punct:]"))) %>% 
+  mutate(state_abbr = str_trim(str_remove_all(state_abbr, "[:punct:]"))) %>% 
+  left_join(states) %>% 
+  rename(sub_award_amount_all = Sub.award.amount)
+```
+
+```{r}
+prime_states %>% 
+  group_by(state_abbr) %>% 
+  reframe(dollars_spent = sum(Sub.award.amount)) %>% 
+  left_join(crf_feds_all) %>% 
+  mutate(spend_perc_state = dollars_spent / state_payment, spec_perc_all = dollars_spent / state_total_allocation) %>% 
+  view()
+```
+
+In general, we see that the total amount of funds awarded to sub-contracts roughly matches the total amount awarded to states, and where it exceeds the total amount allocated to states it appears to come from money to tribal areas. 
+
+We also see some states award contracts to out-of-state sub-recipients. 
+
+We then move to the next level pass, seeking to understand how prime recipients pass money along to sub-contractees, focusing on the dataset of sub-awarded contracts to see how much money we can trace down to particular recipients and how this compares to the total amount that states were allocated. 
+
+## Sub Awardees
+
+
+```{r}
+project_finances_clean <- project_finaces %>% 
+  select(Prime.recipient, Sub.recipient, Award.number, Award.type, Location.info, County, Sub.award.amount, Money.spent.to.date) %>% 
+  filter(County != "") %>% 
+  mutate(state_abbr_sub = substr(County, 1, 2)) %>% 
+  group_by(Prime.recipient, Sub.recipient, Award.number, County, state_abbr_sub) %>% 
+  reframe(Sub.award.amount = sum(Sub.award.amount, na.rm = TRUE), dollars_spent = sum(Money.spent.to.date, na.rm = TRUE)) 
+```
+
+
+Because of the way our data is structured, we need to be careful about how we join our two datasets together. We start by matching based on the Prime recipient, the sub recipient, and the dollar amount awarded. 
+
+
+```{r}
+primes_subs <- project_finances_clean %>% 
+  mutate(Prime.recipient = str_trim(str_remove_all(Prime.recipient, "[:punct:]"))) %>% 
+  group_by(Prime.recipient, Sub.recipient) %>% 
+  mutate(sub_award_amount_all = sum(Sub.award.amount)) %>% 
+  left_join(prime_states) %>% 
+  rename(state_abbr_prime = state_abbr) %>% 
+  mutate(state_abbr_prime = case_when(
+    str_detect(Prime.recipient, "HOMELAND SECURITY  EMERGENCY PREPAREDNESS LA GOVERNOR") ~ "LA", 
+    TRUE ~ state_abbr_prime
+  ), 
+  state_name = case_when(
+    str_detect(Prime.recipient, "HOMELAND SECURITY  EMERGENCY PREPAREDNESS LA GOVERNOR") ~ "Louisiana", 
+    TRUE ~ state_abbr_prime
+  ))
+```
+
+```{r}
+primes_subs %>% 
+  filter(str_detect(Sub.recipient, "INSIGHT PUBLIC"), str_detect(Prime.recipient, "WISCONSIN")) %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(-c(state_abbr_prime, state_name)) %>% 
+  left_join(prime_states %>% 
+              rename(sub_test = sub_award_amount_all)) %>% 
+  mutate(test = sub_award_amount_all - sub_test) %>% 
+  view()
+```
+
+
+However, there are some instances that did not match perfectly. We now go in and solve this issue. We go into our dataset and filter out all the entries that did not match. 
+
+```{r}
+primes_subs_holder <- primes_subs %>% 
+  filter(!is.na(state_abbr_prime))
+```
+
+We then focus on the unmatched entries in our data. We see that there appears to be an error in matching the exact sub-award amounts across the database, which we can mostly fix with rounding. 
+
+```{r}
+state_prime_supp <- primes_subs %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(-c(state_abbr_prime, state_name)) %>% 
+  rename(sub_award_amount_exact = sub_award_amount_all) %>% 
+  mutate(sub_award_amount_est = round(sub_award_amount_exact, 0)) %>% 
+  left_join(prime_states %>% 
+              mutate(sub_award_amount_est = round(sub_award_amount_all, 0))) %>% 
+  rename(state_abbr_prime = state_abbr)
+```
+
+However, we still have some entities that are unmatched. 
+
+```{r}
+state_prime_supp %>% 
+  filter(is.na(state_abbr)) %>% 
+  select(-c(state_abbr, sub_award_amount_all, state_name)) %>% 
+  select(Prime.recipient, Sub.recipient) %>% 
+  distinct() %>% 
+  view()
+```
+
+We can see that we can fix this with brute force somewhat; however, there are still some unmatched entries, due to the fact that there are a few counties that have the same name across states and contracted out to the same sub-awardees.
+
+```{r}
+state_fix_0 <- state_prime_supp %>% 
+  filter(!is.na(state_abbr_prime))
+```
+
+
+```{r}
+state_fix_1 <- state_prime_supp %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(-c(state_abbr_prime, sub_award_amount_all, state_name)) %>% 
+  mutate(state_abbr_prime = case_when(
+    str_detect(Prime.recipient, "OREGON") ~ "OR", 
+    str_detect(Prime.recipient, "DANE") ~ "WI", 
+    str_detect(Prime.recipient, "DU PAGE") ~ "IL",
+    str_detect(Prime.recipient, "NEW MEXICO") ~ "NM",
+    str_detect(Prime.recipient, "INDIANA") ~ "IN", 
+    str_detect(Prime.recipient, "MAINE") ~ "ME",
+    str_detect(Prime.recipient, "INDIANA") ~ "IN", 
+    str_detect(Prime.recipient, "PR TREASURY DEPARTMENT") ~ "PR", 
+    str_detect(Prime.recipient, "TREASURER CALIFORNIA STATE") ~ "CA"
+  ))
+```
+
+```{r}
+state_fix_2 <- state_fix_1 %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(c(1:5)) %>% 
+  left_join(prime_states) %>% 
+  rename(state_abbr_prime = state_abbr) %>% 
+  group_by(Prime.recipient, Sub.recipient, state_abbr_prime) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1) %>% 
+  select(-c(tal)) 
+```
+
+We can now merge our datasets back together to fix them. 
+
+```{r}
+primes_subs_clean <- primes_subs_holder %>% 
+  bind_rows(state_fix_0) %>% 
+  bind_rows(state_fix_1 %>% 
+              filter(!is.na(state_abbr_prime))) %>% 
+  bind_rows(state_fix_2) %>% 
+  mutate(in_out = case_when(
+    state_abbr_prime == state_abbr_sub ~ "in_state",
+    state_abbr_prime != state_abbr_sub ~ "out_state",
+  )) %>% 
+  select(c(1:6, 9:10, 13, sub_award_amount_all))
+```
+
+
+We can now compare how much money states spent on within-state contracts compared to out of state contracts, as well as the total amount that they spent relative to what they were allocated. 
+
+```{r}
+mark_unique <- function(data, var) { 
+  data %>% 
+  group_by({{ var }}) %>% 
+  mutate(tal = seq(n()), 
+         first_count = case_when(tal == 1 ~ 1)) %>% 
+  select(-c(tal)) %>% 
+    ungroup()
+  }
+```
+
+
+```{r}
+primes_subs_clean <- primes_subs_clean %>% 
+  mark_unique(Sub.recipient)
+```
+
+
+```{r}
+primes_subs_clean %>% 
+  filter(first_count == 1) %>% 
+  nrow()
+```
+
+We were able to identify 76,832 of the reported 90K unique Sub.recipients. However, we know that we will not be able to match all of these sub recipients to actual awards. 
+
+We compare the total amount of money we can trace from prime recipients to sub recipients to the total money that the states report. 
+
+```{r}
+state_awardees <- primes_subs_clean %>% 
+  group_by(state_abbr_prime) %>% 
+  reframe(dollars_awarded = sum(Sub.award.amount, na.rm = TRUE), sub_awards = sum(first_count, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(crf_feds_all) %>% 
+  mutate(perc_state = dollars_awarded / state_payment, perc_all = dollars_awarded / state_total_allocation) 
+```
+
+
+```{r}
+state_awards_all <- state_awardees %>% 
+  ggplot() + 
+  geom_bar(aes(perc_all), fill = brewer.pal(5, "Set3")[5], alpha = 0.8, stat = "bin", color = "black") +
+  labs(x = "Percent of Total State Allocation Traceable to Prime and Sub-Recipients", y = "Number of States") + 
+  scale_x_continuous(labels = scales::percent) +
+  theme_bw() + 
+  axis_theme
+
+state_awards_all 
+```
+
+We see that more than 20 states report 100% of their allocated state funding down to prime and sub awardees. However, there are a number of states that fall short.
+
+```{r}
+state_awardees %>% 
+  arrange(perc_all) %>% 
+  view()
+```
+
+
+```{r}
+state_awardees %>% 
+  ggplot() + 
+  geom_col(aes(x = state_total_allocation, y = reorder(state_abbr, state_total_allocation)), color = "black", fill = brewer.pal(8, "Dark2")[6]) +  
+  geom_col(aes(x = dollars_awarded, y = reorder(state_abbr, state_total_allocation)), color = "black", fill = brewer.pal(8, "Set1")[2]) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) + 
+  labs(x = "Total Dollars to State, and Prime/Sub Recipients", y = "") + 
+  theme_dark() + 
+  axis_theme
+```
+
+For robustness, we also compare how dollars awarded matches against state direct payments. We see that the database of prime and sub awardees clearly includes contracts made by cities and counties. 
+
+```{r}
+primes_subs_clean %>% 
+  group_by(state_abbr_prime) %>% 
+  reframe(dollars_awarded = sum(Sub.award.amount, na.rm = TRUE), sub_awards = sum(first_count, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(crf_feds_all) %>% 
+  mutate(perc_state = dollars_awarded / state_payment, perc_all = dollars_awarded / state_total_allocation) %>% 
+  ggplot() + 
+  geom_bar(aes(perc_state), fill = "lightgrey", alpha = 0.8, stat = "bin", color = "black") +
+  labs(x = "Percent of State Payments Traceable to Prime and Sub-Recipients", y = "Number of States") + 
+  theme_bw() + 
+  axis_theme
+```
+
+We can also examine what percent of state funds went to in-state compared to out of state awardees. 
+
+```{r}
+state_dom_not <- primes_subs_clean %>% 
+  group_by(state_abbr_prime, in_out) %>% 
+  mutate(sub_award_amount_all = case_when(
+    is.na(sub_award_amount_all) ~ Sub.award.amount, 
+    TRUE ~ sub_award_amount_all
+  )) %>% 
+  reframe(state_spent = sum(sub_award_amount_all)) %>% 
+  filter(!is.na(state_abbr_prime)) %>% 
+  group_by(state_abbr_prime) %>% 
+  mutate(tot_spend = sum(state_spent), 
+         spend_perc = state_spent / tot_spend) %>% 
+  ggplot() + 
+  geom_col(aes(y = reorder(state_abbr_prime, tot_spend), x = spend_perc, fill = in_out)) + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Percent of Funds Spent In or Out of State", y = "") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+state_dom_not
+ 
+```
+
+We see that states vary in the amount of funds they spend in state, compared to out of state. 
+
+We now move from here to matching individual awards and their descriptions. Unfortunately, because of inconsistencies with award numbers, we can't consistently match individual projects with the states that awarded those projects. We will see how far we can get and then focus on individual PPE contract data. 
+
+## Individual Contracts (Cleaning)
+
+We start with some basic cleaning. 
+
+```{r}
+project_clean_1 <- project_details %>% 
+  filter(Spending.category != "Select") 
+```
+
+One of the main problems in this data are awards without a specific number, as well as those awarded to multiple participants. We cannot match anything about awards that went to multiple recipients because of a lack of details. 
+
+```{r}
+project_clean_2 <- project_clean_1 %>% 
+  filter(Sub.recipient != "MULTIPLE RECIPIENTS")
+```
+
+### Contracts wih Awards
+
+We  focus on the majority of our data, for which we have award numbers. The process of matching individual contracts to the state that awarded them is tedious and only partially complete. However, we hypothesize that the completeness of any given state's data is correlated with their state capacity and not completely random. 
+
+```{r}
+project_clean_3 <- project_clean_2 %>% 
+  filter(Award.number != "") %>% 
+  rename(sub_award_amnt = Sub.award.amount)
+```
+
+We first see how many entries we can match just by award number and sub-recipient alone.
+
+For some of the entries in our database of prime to sub contracts, we have repeats of the same sub recipient and award number. These entries can be matched by the total dollar amount of the contract awarded, which we begin with. 
+
+```{r}
+project_match_dupes <- primes_subs_clean %>% 
+  filter(Award.number != "") %>% 
+  group_by(Sub.recipient, Award.number) %>% 
+  mutate(tal = seq(n()), 
+         max_tal = max(tal)) %>% 
+  group_by(Sub.recipient, Award.number) %>% 
+  filter(max_tal > 1, Sub.award.amount > 0 ) %>% 
+  left_join(
+    project_clean_3 %>% 
+      group_by(Sub.recipient, Award.number, Project.description, Spending.category) %>% 
+      reframe(Sub.award.amount = sum(sub_award_amnt))
+  ) 
+```
+
+We then take these entries out of our database of projects. 
+
+```{r}
+project_clean_4 <- project_clean_3 %>% 
+  anti_join(project_match_dupes %>% 
+              select(Sub.recipient, Award.number))
+```
+
+Now, focusing on the remaining entries, we match by sub-recipient and award number. 
+
+```{r}
+primes_subs_no_dupes <- primes_subs_clean %>% 
+  filter(Award.number != "") %>% 
+  group_by(Sub.recipient, Award.number) %>% 
+  mutate(tal = seq(n()), 
+         max_tal = max(tal)) %>% 
+  group_by(Sub.recipient, Award.number) %>% 
+  filter(max_tal == 1) 
+```
+
+
+```{r}
+project_match_1 <- project_clean_4 %>% 
+  left_join(primes_subs_no_dupes)
+```
+
+
+```{r}
+no_match1 <- project_match_1 %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(c(1:9)) 
+```
+
+We also see that only 200 entries were not matched with our initial database of prime and sub awardees. We can examine how many of these contracts might be related to PPE expenditures. 
+
+```{r}
+ppe_words <- c("ppe", "protective", "mask", "respirator", "nN95")
+```
+
+
+```{r}
+no_match_ppe <- no_match1 %>% 
+  mutate(proj_lower = tolower(Project.description),
+    ppe_match = case_when(
+    str_detect(proj_lower, paste(ppe_words, collapse = "|")) | Spending.category == "Personal Protective Equipment" ~ 1
+  )) %>% 
+  filter(ppe_match == 1)
+```
+
+From these, we filter out contracts that do not have a sub-recipient match in our database of awardees. 
+
+
+```{r}
+no_match_list <- no_match_ppe %>% 
+  anti_join(primes_subs_clean %>% 
+              select(Sub.recipient))
+
+no_match_fix1 <- no_match_ppe %>% 
+  filter(!Sub.recipient %in% no_match_list$Sub.recipient) %>%
+  left_join(primes_subs_clean %>% ungroup() %>% select(c(Sub.recipient, state_abbr_sub, state_abbr_prime, in_out)) %>% distinct() %>% filter(str_detect(Sub.recipient, "FASTENAL", negate = TRUE))) %>% 
+  mutate(state_abbr_sub = 
+           case_when(str_detect(Sub.recipient, "FASTENAL") ~ "MO", 
+                     TRUE ~ state_abbr_sub), 
+         state_abbr_prime = case_when(str_detect(Sub.recipient, "FASTENAL") ~ "MO", 
+                     TRUE ~ state_abbr_prime), 
+         in_out = case_when(str_detect(Sub.recipient, "FASTENAL") ~ "in_state", 
+                     TRUE ~ in_out))
+```
+
+
+We can now join our databases together for our first complete database of matched contracts, acknowledging that we missed some contracts because of a lack of matches. 
+
+```{r}
+project_match_2 <- project_match_1 %>% 
+  filter(!is.na(state_abbr_prime)) %>% 
+  bind_rows(no_match_fix1) 
+```
+
+We now turn to awards without an award number to see how many of these we can match.
+
+### No Award Number
+
+In adddition, we have a substantial amount of awards with no award number. 
+
+```{r}
+no_award_num <- project_clean_2 %>% 
+  filter(Award.number == "")
+```
+
+For these awards, we see that there are no project descriptions; however, these projects are separated across multiple spending categories, including a substantial amount of awards to our area of main interest: Personal Protective Equipment. 
+
+```{r}
+no_award_num %>% 
+  group_by(Spending.category) %>% 
+  count()
+```
+
+As such, we try and match by sub-recipient as well as the total amount of money that that recipient received. To do this, we have to round our sub award amounts to a common degree. 
+
+We see that in certain cases we will have to use the sub award amount to match, and in certain cases the money spent to date amount to match. 
+
+We start by focusing on values that have a positive sub award amount. 
+
+```{r}
+no_award_pos <- no_award_num %>% 
+  filter(Sub.award.amount > 0) %>% 
+  mutate(sub_award_est = round(Sub.award.amount, 3),
+         sub_award_ext = Sub.award.amount) %>% 
+  select(-c(Sub.award.amount)) 
+```
+
+We now see how many of these we can match. 
+
+```{r}
+no_award_match_1 <- no_award_pos %>% 
+  ungroup() %>% 
+  left_join(primes_subs_clean %>% 
+              ungroup() %>% 
+              filter(Award.number == "", sub_award_amount_all > 0) %>% 
+              select(-c(Award.number)) %>% 
+              mutate(sub_award_est = round(Sub.award.amount, 3))) 
+```
+
+```{r}
+no_award_clean_1 <- no_award_match_1 %>% 
+  filter(!is.na(state_abbr_prime)) %>% 
+  group_by(Sub.recipient, sub_award_est) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1)
+```
+
+We see that we've matched 20,973 out of 23,232 observations. For these other observations, we can see how far we get using the Money Spent to Date variable. 
+
+```{r}
+no_award_match_2 <- no_award_match_1 %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(c(1:11)) %>% 
+  mutate(sub_award_est = round(Money.spent.to.date, 3)) %>% 
+  left_join(primes_subs_clean %>% 
+              ungroup() %>% 
+              filter(Award.number == "", sub_award_amount_all > 0) %>% 
+              select(-c(Award.number)) %>% 
+              mutate(sub_award_est = round(Sub.award.amount, 3))) %>% 
+  rename(money_spent_est = sub_award_est)
+```
+
+With this, we can get another 400 or so matches, leaving us still a few thousand short.  
+
+```{r}
+no_award_clean_2 <- no_award_clean_1 %>% 
+  bind_rows(no_award_match_2 %>% 
+  filter(!is.na(state_abbr_prime)))
+```
+
+We can now take the remainder of the contracts that we have and match to entries that have unique states. 
+
+```{r}
+unique_subs <- primes_subs_clean %>% 
+  select(Prime.recipient, Sub.recipient, state_abbr_sub, state_abbr_prime) %>% 
+  distinct() %>% 
+              group_by(Sub.recipient) %>% 
+              mutate(tal = seq(n())) %>% 
+              mutate(max_tal = max(tal, na.rm = TRUE))
+
+```
+
+
+```{r}
+no_award_match_3 <- no_award_pos %>% 
+  filter(!Sub.recipient %in% unique(no_award_clean_2$Sub.recipient)) %>% 
+  select(-c(sub_award_est)) %>% 
+  left_join(unique_subs %>% 
+              filter(max_tal == 1))
+```
+
+This gives us another 1,500 matched entries, leaving us just over 200 unmatched entries. For now, we will discard these entries. 
+
+```{r}
+no_award_match_3 %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  view()
+```
+
+We now have to clean up our variables for the dollars spent on each contract. 
+
+```{r}
+no_award_clean_3 <- no_award_clean_2 %>% 
+  bind_rows(no_award_match_3 %>% 
+              filter(!is.na(state_abbr_prime)))
+```
+
+
+We note that our "best" variable to measure spending in this data is the "sub_award_ext" variable. We simplify the dataset to keep this variable as well as a few other for potential usefulness later. 
+
+```{r}
+no_award_final <- no_award_clean_3 %>% 
+  ungroup() %>% 
+  select(Sub.recipient, Prime.recipient, Project.description, state_abbr_sub, state_abbr_prime, Spending.category, dollars_spent = Money.spent.to.date, Sub.award.amount, sub_award_amount_all, dollars_awarded = sub_award_ext) 
+```
+ 
+### Finalizing Matched Data
+
+Before we join this data back with our cleaned and matched project number data. Our "best" variables are the Sub.award.amount variable from the prime-sub recipient database, and the Money Spent to Date variable from the individual sub-recipients to award numbers database.
+
+We simplify to be one row per sub recipient and award number. For our project data with award numbers, we see that each award number is further broken down into sub-spending categories. The total amount of the award is tracked in the "Sub-Award Amount" column, while the money spent to date on a specific category is tracked in the "Money Spent to Date" column. 
+
+```{r}
+project_match_clean <- project_match_2 %>% 
+  group_by(Sub.recipient, Award.number, Project.description, Spending.category) %>% 
+  reframe(dollars_awarded = max(Sub.award.amount), dollars_spent = sum(Money.spent.to.date, na.rm = TRUE), state_abbr_prime, in_out) %>% 
+  distinct() 
+```
+
+```{r}
+perc_check <- function(data, var){ 
+  data %>% 
+    left_join(state_awardees) %>% 
+    mutate(check_perc = {{  var  }} / state_total_allocation)
+  }
+```
+
+We see that we are able to match a highly heterogenous set of contracts back to the state that awarded them. This result calls into question our earlier assumption of non-randomness in the amount of contracts that are able to be matched. Nonetheless, we press on. 
+
+```{r}
+project_match_2 %>% 
+  group_by(state_abbr_prime) %>% 
+  reframe(dollars_spent = sum(Money.spent.to.date, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  perc_check(dollars_spent) %>% view()
+```
+
+
+
+```{r}
+project_match_clean %>% 
+  group_by(state_abbr_prime) %>% 
+  reframe(state_dollars = sum(dollars_awarded, na.rm = TRUE), dollars_spent = sum(dollars_spent, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  perc_check(dollars_spent) %>% 
+  view()
+```
+
+
+We can then append to this dataset our contracts with no award numbers that we were still able to match. 
+
+```{r}
+project_match_final <- project_match_clean %>% 
+  bind_rows(no_award_final)
+```
+
+We now have a dataset of 172507 individual contracts that we can analyze. 
+
+## Individual Contracts (Analysis) 
+
+We start with a high level summary of state spending to compare to our previous estimates and data. 
+
+We know that we were not able to match all of our prime to sub awardee data with our data on individual contracts. As such, we begin with a description of how much we are off by for each state. 
+
+## State Overview (All)
+
+
+```{r}
+state_allocation_check <- project_match_final %>% 
+  group_by(state_abbr_prime) %>% 
+  reframe(spent_dollars = sum(dollars_spent, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  mutate(perc_contract_spent = spent_dollars / state_total_allocation) %>% 
+  ggplot() + 
+  geom_point(shape = 21, aes(x = state_total_allocation, y = perc_contract_spent, fill = perc_contract_spent), size = 5, color = "black", alpha = 0.8) + 
+  geom_text_repel(aes(x = state_total_allocation, y = perc_contract_spent, label = state_abbr)) +
+  scale_fill_distiller(palette = "YlOrRd") + 
+  guides(fill = "none") + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) + 
+  scale_y_continuous(labels = scales::percent) + 
+  labs(x = "Total Allocation to State", y = "Dollars Traceable to Individual Projects") + 
+  theme_bw()+ 
+  axis_theme
+
+state_allocation_check
+```
+
+
+## State Overview (Spending Categories)
+
+We can now see how well we can map the amount that states spent across a variety of discrete spending categories. 
+
+
+```{r}
+state_spending_contracts <- project_match_final %>% 
+  group_by(state_abbr_prime, Spending.category) %>% 
+  reframe(spent_dollars = sum(dollars_spent, na.rm = TRUE)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  mutate(Spending.category = case_when(
+    Spending.category == "" ~ "Unknown", 
+    TRUE ~ Spending.category
+  )) %>% 
+  left_join(state_awardees) %>% 
+  group_by(state_abbr) %>% 
+  mutate(all_cats_spend = sum(spent_dollars)) %>% 
+  ungroup() %>% 
+  mutate(perc_contract_spent = spent_dollars / state_total_allocation, 
+         perc_state_spent = all_cats_spend / state_total_allocation) %>% 
+  ggplot() + 
+  geom_col(aes(x = perc_contract_spent, y = reorder(state_abbr, state_total_allocation), fill = Spending.category), color = "black") + 
+  scale_fill_manual(values = cat_scale) + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Percent of Contracts Spent on a Specific Category", y = "") + 
+  theme_bw()
+
+state_spending_contracts
+```
+
+
+# PPE Expenditures 
+
+## By Spending Category
+
+We now focus specifically on how states acquired PPE. 
+
+From earlier, we have our marker of if a project description or spending category might be related to PPE expenditures. We use this indicator to filer our final matched dataset. 
+
+
+```{r}
+ppe_words <- c("ppe", "protective", "mask", "respirator", "nN95")
+```
+
+```{r}
+project_match_final <- project_match_final %>% 
+  mutate(in_out_1 = case_when(
+    is.na(state_abbr_sub) ~ in_out,
+    state_abbr_sub == state_abbr_prime ~ "in_state", 
+    state_abbr_sub != state_abbr_prime ~ "out_state"
+  ))
+```
+
+
+```{r}
+ppe_projects <- project_match_final %>% 
+  mutate(proj_lower = tolower(Project.description),
+    ppe_match = case_when(
+    str_detect(proj_lower, paste(ppe_words, collapse = "|")) | Spending.category == "Personal Protective Equipment" ~ 1
+  )) %>% 
+  filter(ppe_match == 1) %>% 
+  mutate(Spending.category = case_when(
+    Spending.category == "" ~ "Unknown", 
+    TRUE ~ Spending.category
+  ))
+```
+
+We first examine how PPE projects are distributed across discrete spending categories. 
+
+```{r}
+ppe_projects_category <- ppe_projects %>% 
+  group_by(Spending.category) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  ggplot() + 
+  geom_col(aes(reorder(Spending.category, dollars_spent), y = dollars_spent, fill = Spending.category), color = "black") + 
+  coord_flip() + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) +
+  scale_fill_manual(values = cat_scale) + 
+  labs(y = "Potentially PPE Related Project Spending", x = "") + 
+  guides(fill = "none") + 
+  theme_bw()
+
+ppe_projects_category
+```
+
+
+Unsurprisingly the "Personal Protective Equipment" spending category describes most of the possible PPE expenditures in our dataset. 
+
+As such, we can exlude this category to explore how PPE expenditures might be distributed across other spending categories. 
+
+```{r}
+ppe_projects %>% 
+  group_by(Spending.category) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  filter(Spending.category != "Personal Protective Equipment") %>% 
+  ggplot() + 
+  geom_col(aes(reorder(Spending.category, dollars_spent), y = dollars_spent, fill = Spending.category), color = "black") + 
+  coord_flip() + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-9)) +
+  scale_fill_manual(values = rev(cat_scale)) + 
+  labs(y = "Potentially PPE Related Project Spending", x = "") + 
+  guides(fill = "none") + 
+  theme_bw()
+```
+## By State
+
+We can now explore state expenditures on PPE. 
+
+```{r}
+state_ppe_spend <- ppe_projects %>% 
+  group_by(Spending.category, state_abbr_prime) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent/state_total_allocation, y = reorder(state_abbr, state_total_allocation), fill = Spending.category), color = "black") + 
+  scale_fill_manual(values = cat_scale) + 
+  scale_x_continuous(labels = scales::percent)+ 
+  labs(x = "Percent of State Allocation on Possible PPE Expenditures", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+state_ppe_spend
+```
+
+
+## In State v. Out of State
+
+We can also explore how much states spent on within state expenditures, compared to out of state expenditures. 
+
+```{r}
+ppe_projects %>% 
+  group_by(in_out, state_abbr_prime) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent/state_total_allocation, y = reorder(state_abbr, state_total_allocation), fill = in_out), color = "black") + 
+  scale_x_continuous(labels = scales::percent)+ 
+  labs(x = "Percent of State Allocation on Possible PPE Expenditures", y = "") + 
+  theme_bw() + 
+  axis_theme
+```
+
+
+
+## Match to Manufactures 
+
+The reason we take an expansive approach to defining PPE expenditures is to ensure that we catch any possible matches to our database of confirmed domestic manufacturers. 
+
+Based on an analysis of prime-sub awardees that were not matched to any specific contract, we identify 3 contracts between O&M Halyard and NY that were not matched to any possible PPE related expenditures. 
+
+### Bring in Data
+
+Bring in mask data to check against. 
+
+```{r}
+box_dir <- "/Users/Nosheal/Library/CloudStorage/Box-Box/COVID 19 Master Folder/Data/Masks/"
+```
+
+```{r}
+box_here <- function(file) { 
+  paste(box_dir, file, sep = "")
+  }
+```
+
+
+```{r}
+mask_sample <- readRDS(box_here("final_sample.RDS"))
+```
+
+```{r}
+corp_remove <- c("Limited" ,"Ltd", "LTD", "Incorporated", "Company",  "Corporation", "Co", "Inc",  "[[:punct:]]", "LLC", "INC", "company", "COMPANY", "CORPORATION")
+```
+
+
+```{r}
+mask_comps <- mask_sample %>% 
+  mutate(reg_appr = case_when(
+    niosh_counter == TRUE | fda_counter == TRUE ~ 1
+  )) %>% 
+  select(dom_useful_num, original_company_name, address, DUNS, corporate_family_dbh, sales_dbh, state_abbr, reg_appr, min_date, desc) %>% 
+    mutate(comp_match = tolower(str_trim(str_remove_all(original_company_name, paste(corp_remove, collapse = "|"))))) 
+```
+
+```{r}
+simplify <- function(string){ 
+  
+  tolower(str_trim(str_remove_all(string, paste(corp_remove, collapse = "|"))))
+  
+}
+```
+
+
+We have to manually correct some entries from our PPE data. 
+
+```{r}
+project_manf_match <- ppe_projects%>% 
+  mutate(comp_match = simplify(Sub.recipient)) %>% 
+  mutate(comp_match = simplify(Sub.recipient), 
+        Sub.recipient = str_remove_all(Sub.recipient, "[[:punct:]]")) %>% 
+  mutate(comp_match = case_when(
+  str_detect("DENTEC", Sub.recipient) ~ "dentec safety specialists",
+  str_detect("HONEYWELL", Sub.recipient) ~ "honeywell safety products",
+  str_detect("KIMBERLY CLARK", Sub.recipient) ~ "kimberlyclark",
+  str_detect("GERSON", Sub.recipient) ~ "louis m gerson",
+  str_detect("MOLDEX", Sub.recipient) ~ "moldex", 
+  str_detect("HALYARD", Sub.recipient) ~ "om halyard", 
+  str_detect("THOMAS SCIENTIFIC", Sub.recipient) ~ "thomas scientific",
+  str_detect("MASTER BRANDS", Sub.recipient) ~ "master brands health",
+  str_detect("FAIRFIELD PROCESSING", Sub.recipient) ~ "fairfield processing", 
+  str_detect("MERROW", Sub.recipient) ~ "merrow ppe", 
+  str_detect("FISHER S|FISHER H", Sub.recipient) ~ "thermo fisher scientific", 
+  str_detect("SKINNY", Sub.recipient) ~ "skinny",
+  str_detect("MARK ONE", Sub.recipient) ~ "mark one medical", 
+  TRUE ~ comp_match)) %>% 
+  left_join(mask_comps)
+  
+```
+
+## State Spending on Known Manufacturers and Distributors
+
+### Companies and Dollars
+
+```{r}
+conf_projs <- project_manf_match %>% 
+  filter(!is.na(dom_useful_num)) %>% 
+  group_by(dom_useful_num, state_abbr_prime) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num)), color = "black") + 
+  geom_label(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num), label = companies), position = "stack", size = 4) + 
+  scale_fill_manual(values = c("lightgrey", brewer.pal(8, "Dark2")[1])) + 
+  labs(x = "Number of projects to known manufacturers / distributors", y = "") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+conf_projs
+```
+
+
+
+```{r}
+conf_dollars <- project_manf_match %>% 
+  filter(!is.na(dom_useful_num)) %>% 
+  group_by(dom_useful_num, state_abbr_prime) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num)), color = "black") + 
+  scale_fill_manual(values = c("lightgrey", brewer.pal(8, "Dark2")[1])) + 
+  labs(x = "Dollars Spent on known manufacturers / distributors", y = "") + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$M", scale = 1e-6)) +
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+conf_dollars
+```
+
+### Firm Size
+
+We can also explore how states spent on companies of different sizes. 
+
+```{r}
+projects_match_size <- project_manf_match %>% 
+  mutate(firm_size = case_when(
+    sales_dbh < 1000000 ~ "Under $1 Mil", 
+    sales_dbh >= 1000000 & sales_dbh < 10000000 ~ "$1M-$10M", 
+    sales_dbh >= 10000000 & sales_dbh < 50000000 ~ "$10M-$50M", 
+    sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ "$50M-$1B", 
+    sales_dbh >= 1000000000 ~ "$1B + "
+  ), 
+  size_pos = case_when(
+    sales_dbh < 1000000 ~ 5, 
+    sales_dbh >= 1000000 & sales_dbh < 10000000 ~ 4, 
+    sales_dbh >= 10000000 & sales_dbh < 50000000 ~ 3, 
+    sales_dbh >= 50000000 & sales_dbh < 1000000000 ~ 2, 
+    sales_dbh >= 1000000000 ~ 1
+  ), 
+  dom_manf = case_when(
+    dom_useful_num == 1 ~ "Known Domestic Manufacturer", 
+    dom_useful_num == 0 ~ "Distributor, Wholesaler, or \nForeign Manufacturer"
+  ))
+  
+```
+
+```{r}
+size_col <- c(brewer.pal(9, "Blues")[4], brewer.pal(9, "Blues")[6], brewer.pal(9, "Blues")[8])
+```
+
+```{r}
+manf_labels <- c("Distributor, Foreign Manufacturer, or Wholesaler", "Domestic Manufacturer")
+```
+
+
+```{r}
+manf_size <- projects_match_size %>% 
+  filter(!is.na(dom_useful_num)) %>% 
+  group_by(dom_manf, state_abbr_prime, firm_size, size_pos) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent, y = reorder(state_abbr, state_total_allocation), fill = reorder(firm_size, size_pos)), color = "black") +
+  scale_fill_manual(values = rev(size_col)) + 
+  labs(x = "Dollars Spent on known manufacturers / distributors", y = "", fill = "Annual Firm Sales (DB Hoovers)") + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$M", scale = 1e-6)) +
+  theme_bw() + 
+  facet_wrap(~dom_manf) + 
+  axis_theme
+
+manf_size
+```
+
