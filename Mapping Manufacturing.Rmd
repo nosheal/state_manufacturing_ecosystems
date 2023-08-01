@@ -6,12 +6,12 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
 ```
 
-This is a document to provide some basic context about the US Manufacturing Economy in 2019. 
+This is a document to provide some basic context about the US Manufacturing Economy before the pandemic, using 2019 as a baseline year and also benchmarking changes between 2010 and 2019 to capture some long time trends. This memo uses the Quarterly Census of Employment and Wages for employment data and the Bureau of Economic Analysis Regional GDP data for GDP data.
 
-**Summary**: Nationally, the manufacturing share of the economy, measured both in terms of employment and GDP, has been declining since 2010. At the state level, we a far more heterogenous manufacturing economy: in some states, the manufacturing sector outpacing state GDP and employment growth between 2010 and 2019; in others, the manufacturing sector lags
+**Summary**: Nationally, the manufacturing share of the economy, measured both in terms of employment and GDP, has been declining since 2010. At the state level, we a far more heterogenous manufacturing economy: in some states, the manufacturing sector outpacing state GDP and employment growth between 2010 and 2019; in others, the manufacturing sector lags behind all-sector growth slightly. 
 
 ```{r, include = FALSE}
 library(tigris)
@@ -41,7 +41,6 @@ area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>%
   ))
 ```
 
-
 ```{r, include = FALSE}
 states <- data.frame(state_abbr = state.abb, area_title = state.name)
 ```
@@ -50,34 +49,31 @@ states <- data.frame(state_abbr = state.abb, area_title = state.name)
 area_codes <- left_join(area_codes, states)
 ```
 
-
 ```{r, include = FALSE}
 manf_col <- brewer.pal(9, "Set3")[5]
 total_col <- "#A5764D"
 ```
 
-In this document, we seek to establish some baseline context about state manufacturing ecosystems. We focus on manufacturing employment and GDP, examining state and county level 2-digit NAICS codes (31-33), as well as state level 3-digit NAICS codes (300's). 
+In this document, we seek to establish some baseline context about state manufacturing ecosystems. We focus on manufacturing employment and GDP, examining state and county level 2-digit NAICS codes (31-33), as well as state level 3-digit NAICS codes (300's).
 
-We consider both absolute values, the share of the manufacturing economy relative to the total state economy, trends over time, and benchmark against both state and national level averages. 
+We consider both absolute values, the share of the manufacturing economy relative to the total state economy, trends over time, and benchmark against both state and national level averages.
 
-In addition, we break down the composition of manufacturing activity at both the state industry and geography levels. 
+In addition, we break down the composition of manufacturing activity at both the state industry and geography levels.
 
-For this work, we use data from the BLS QCEW (Quarterly Cencus of Employment and Wages), as well as the BEA's regional GDP measures. We define a procedure that can be modified to incorporate more granular data as well. 
+For this work, we use data from the BLS QCEW (Quarterly Cencus of Employment and Wages), as well as the BEA's regional GDP measures. The procedure that we define can be modified to incorporate more granular data as well.
 
-We start by loading in previously cleaned data. 
 
 ```{r}
+#We start by loading in previously cleaned data and setting up some base maps.
 manf_data <- readRDS(here("State Data/manf_clean.RDS"))
 county_emp <- readRDS(here("State Data/county_employment.RDS"))
 state_ind <- readRDS(here("State Data/state_ind.RDS"))
 nat_gdp <- readRDS(here("State Data/national_gdp.RDS"))
 ```
 
-# Base maps
-
-We then use the urbnmapr package to get our baseline maps for plotting. We get a state map: 
-
 ```{r, include = FALSE}
+# We can then easily join our existing datasets for some easy mapping. We start with our state level maps to begin with.
+# STATE MAP 
 states_sf <- states(cb = TRUE, resolution = "20m") %>%
 shift_geometry(position = "outside")
 
@@ -85,29 +81,27 @@ states_leaflet <- states_sf %>%
   sf::st_transform('+proj=longlat +datum=WGS84')
 ```
 
-As well as a county map: 
-
 ```{r, include = FALSE}
+# COUNTY MAP 
 county_sf <- counties(cb = TRUE)
 
 county_leaflet <- county_sf %>% 
   sf::st_transform('+proj=longlat +datum=WGS84')
 ```
 
-We can then easily join our existing datasets for some easy mapping. We start with our state level maps to begin with. 
 
 # State level maps
 
-In general, we are looking to create a series of maps. The first map shows raw levels, the second map benchmarks these levels against national or state averages, the third map shows change between two specific years (either in percent change or raw percentage points in the case of manufacturing share), and the fourth map benchmarks this change against national or state averages. 
+In general, we are looking to create a series of maps. The first map shows raw levels, the second map benchmarks these levels against national or state averages, the third map shows change between two specific years (either in percent change or raw percentage points in the case of manufacturing share), and the fourth map benchmarks this change against national or state averages.
 
-As we work towards these maps, we will endeavor to explore data interactively to better contextualize our information. The high degree of heteregeneity across states, counties, and manufacturing industries suggests that at the moment, manufacturing ecosystems could be considered "high-dimensional" data structures. In our work, we seek to simplify the number of dimensions that we need to evaluate manufacturing ecosytems across, and create meanigful categorizations of state manufacturinge ecosystems. 
+As we work towards these maps, we will endeavor to explore data interactively to better contextualize our information. The high degree of heteregeneity across states, counties, and manufacturing industries suggests that at the moment, manufacturing ecosystems could be considered "high-dimensional" data structures. In our work, we seek to simplify the number of dimensions that we need to evaluate manufacturing ecosytems across, and create meanigful categorizations of state manufacturinge ecosystems.
 
 ```{r}
 state_manf <- states_leaflet %>% 
   left_join(manf_data %>% rename(NAME = area_title))
 ```
 
-We begin with 2019 as our year of reference. 
+We begin with 2019 as our year of reference.
 
 ```{r}
 state_manf_2019 <- state_manf %>% 
@@ -115,20 +109,19 @@ state_manf_2019 <- state_manf %>%
 ```
 
 ## 2019 Employment Levels
-We endeavor to build an interactive map that provides us with the information that we care about.
-
-To accomplish this, we have to create a color mapping function, plot a base map using leaflet (addPolygons function), and then add highlight options that contain customized, dynamic text to populate the labels with (highlightOptions). This work uses the leaflet package. 
-
 
 ```{r}
+# We endeavor to build an interactive map that provides us with the information that we care about.
+
+#To accomplish this, we have to create a color mapping function, plot a base map using leaflet (addPolygons function), and then add highlight options that contain customized, dynamic text to populate the labels with (highlightOptions). This work uses the leaflet package. 
+
 state_manf_2019 <- state_manf_2019 %>% 
   mutate(emp_k = emp / 1000,
     emp_thousands = prettyNum(emp, big.mark = ',',scientific=FALSE))
 ```
 
-As we go through setting up our first interactive map, we will try and define some functions to help us create new maps later. 
-
 ```{r}
+# As we go through setting up our first interactive map, we will try and define some functions to help us create new maps later. 
 
 emp_col <- colorNumeric(palette = "BuPu", domain = state_manf_2019$emp_k, reverse = TRUE)
 ```
@@ -146,7 +139,6 @@ col_def <- function(data, var, col_scale){
 emp_col <- col_def(state_manf_2019, emp_k, "BuPu")
 ```
 
-
 ```{r}
 #Create Labels for popups
 labels <- sprintf(
@@ -154,7 +146,6 @@ labels <- sprintf(
   state_manf_2019$NAME, state_manf_2019$emp_thousands, state_manf_2019$year
 ) %>% lapply(htmltools::HTML)
 ```
-
 
 ```{r}
 #Define dynamic column selector function 
@@ -171,7 +162,6 @@ var_def <- function(data, var) {
   return(var_list)
 }
 ```
-
 
 ```{r}
 #Define dynamic label Creator
@@ -230,12 +220,8 @@ m <-  state_manf_2019 %>%
   
 ```
 
-
-
-We now pause to define some more generic functions for mapping. 
-
-
 ```{r}
+# We now  to define some more generic functions for mapping. 
 build_map <- function(data, var1, label_var, colors, text, sector, legend_title) { 
   
   col_list <- var_def(data, {{ var1 }})
@@ -271,22 +257,17 @@ build_map <- function(data, var1, label_var, colors, text, sector, legend_title)
   }
 ```
 
-We see that we can use this function to build maps quickly! 
-
-**Manufacturing employment concentrated in a few states**
+**Manufacturing employment is concentrated in a few states**
 
 ```{r, echo = FALSE}
 build_map(state_manf_2019, emp, emp_thousands, "BuPu", "Avg Monthly Emploment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Monthly Employees")
 ```
 
-In terms of absolute numbers, we see that manufacturing employment is dominated by the larger economies (Texas and California), but we also see that there is a substantial amount of manufacturing employment in the midwest region. 
-
+In terms of absolute numbers, we see that manufacturing employment is dominated by the larger economies (Texas and California), but we also see that there is a substantial amount of manufacturing employment in the midwest region.
 
 ## 2019 GDP Levels
 
-Now, we turn to GDP. 
-
-We can then also make an interactive map, similar to as we did above. First, we just have to clean up variables that we want to display, and then use our previously defined function!
+Turning to GDP, we see that manufacturing GDP is dominated by the largest states; however, the delta between the largest states and the rest of the states appears to be larger than with manufacturing employment.
 
 ```{r}
 state_gdp_2019 <- state_manf_2019 %>% 
@@ -298,6 +279,7 @@ state_gdp_2019 <- state_manf_2019 %>%
     manf_emp_share_perc = manf_emp_share*100, 
     manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
 ```
+
 **Larger delta between largest states and the rest with Manufacturing GDP**
 
 ```{r, echo = FALSE}
@@ -306,9 +288,7 @@ gdp_manf_1 <- build_map(state_gdp_2019, gdp_manf_b, gdp_manf_b_clean, "BuPu", "A
 gdp_manf_1
 ```
 
-Similarly to manufacturing emploment, manufacturing GDP is dominated by the largest states; however, the delta between the larest states and the rest of the states appears to be larger than with manufacturing employment. 
-
-We can also plot the correlation between manufacturing employment and manufacturing gdp. 
+We can also plot the correlation between manufacturing employment and manufacturing gdp.
 
 ```{r, echo = FALSE}
 gdp_emp_2019 <- state_manf_2019 %>% 
@@ -325,7 +305,7 @@ gdp_emp_2019 + geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.o
 
 ## 2019 Manufacturing Share
 
-We now turn to manufacturing share of the economy, beginning with GDP: 
+Because the size of state economies seems to dominate much of the across-state variance in manufacturing, we normalize by the size of each state's total economy and consider the manufacturing share of employment and GDP.
 
 ### 2019 Manufacturing Share (GDP)
 
@@ -341,6 +321,8 @@ The Southwest and Midwest regions have particularly high shares of manufacturing
 
 ### 2019 Manufacturing Share (Employment)
 
+Notably, the map of the manufacturing sector share of employment appears to be similar to the map of the manufacturing share of GDP, with a few states appearing to have a higher relative manufacturing share of employment than GDP. This suggests that some states might be considered "labor-intensive" manufacturing economies, as opposed to other states that might be considered more "capital-intensive,"consistent with exisiting theory and evidence (Fuchs et al., 2020).
+
 **A similar set of states have high shares of manufacturing employment**
 
 ```{r, echo = FALSE}
@@ -348,29 +330,25 @@ emp_manf_share <- build_map(state_gdp_2019, manf_emp_share_perc, manf_emp_share_
 
 emp_manf_share
 ```
-Notably, the map of the manufacturing sector share of employment appears to be similar to the map of the manufacturing share of GDP, with a few states appearing to have a higher relative manufacturing share of employment than GDP. This suggests that some states might be considered "labor-intensive" manufacturing economies, as opposed to other states that might be considered more "capital-intensive." 
 
-# 2019 Industry Composition 
+# 2019 Industry Composition
 
 We now turn to our industry composition data. Here, we are interested in both understanding which industries are dominant in a state, how these top industries vary across states, and how concentrated the states economy is in a few particular industries. To accomplish this, we will focus on the top 3-5 industries in the state, as well as construct a Herfindahl Hirschman index to measure concentration.
 
-We also read in employment data. 
-
 ```{r}
+# Read in employment data. 
 ind_emp_2019 <- readRDS(here("State Data/industry_emp.RDS"))
 ```
 
 ```{r}
+# read cross walk
 industry_titles <- read_csv(here("State Data/industry-titles.csv")) %>% 
   filter(str_length(industry_code) == 3) %>% 
   mutate(industry_code = as.numeric(industry_code))
 ```
 
-
-
-We will perform some of our calculations in our state_ind dataset first, and then merge this dataset with our map. 
-
 ```{r}
+# perform some of our calculations in our state_ind dataset first, and then merge this dataset with our map. 
 state_ind_2019 <- state_ind %>% 
   filter(year == 2019) %>% 
   mutate(Description = str_remove(Description, "manufacturing")) %>% 
@@ -379,21 +357,21 @@ state_ind_2019 <- state_ind %>%
   mutate(ind_tal = seq(n())) 
 ```
 
-Exploring this dataset, we see that the dropoff in industry GDP between the "top" industry in a state, and the next highest industry can be quite steep (as in the case of Alaska), or more gradual (as in the case of Alabama)
-
-Interestingly, if we focus on only the top 3 manufacturing industries in a state, we get a list of 12 industries. Expanding this to top 4 gives us a list of 16 industries, 17 for 5, and 18 for 6. 
+Focusing on only the top 3 manufacturing industries in a state, we get a list of 12 industries. Expanding this to top 4 gives us a list of 16 industries, 17 for 5, and 18 for 6.
 
 ```{r}
 state_ind_2019 %>% 
   filter(ind_tal < 5) %>% 
   ungroup() %>% 
-  count(Description)
+  count(Description) %>% 
+  arrange(desc(n))
 ```
 
-
-To display our data in a map, we will remember the top line industry, and then create a variable that holds the description of the top 3 along with their industry GDPs. 
+Exploring our dataset, we see that the dropoff in industry GDP between the "top" industry in a state, and the next highest industry can be quite steep (as in the case of Alaska), or more gradual (as in the case of Alabama).
 
 ```{r}
+#To display our data in a map, we will remember the top line industry, and then create a variable that holds the description of the top 3 along with their industry GDPs. 
+
 ind_comp <- state_ind_2019 %>% 
   group_by(GeoName) %>% 
   mutate(ind_hhi = sum(ind_share_state**2, na.rm = TRUE)) %>% 
@@ -405,6 +383,23 @@ ind_comp <- state_ind_2019 %>%
   ))
 ```
 
+```{r, echo = FALSE, fig.width=11,fig.height=8}
+ind_comp_fig <- ind_comp %>% 
+  filter(ind_tal <=3) %>% 
+  rename(area_title = GeoName) %>% 
+  left_join(states) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  left_join(manf_data %>% filter(year == 2019) %>%  select(state_abbr, gdp_manf)) %>% 
+  ggplot() + 
+  geom_col(aes(x = manf_ind_gdp/gdp_manf, reorder(state_abbr, state_gdp), group = state_abbr, fill = Description), position = "stack", color = "black", alpha = 0.8) + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Sub-Industry Share of Manufacturing Economy (GDP)", y = "", fill = "", title = "Some States More Concentrated than Others") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(legend.position = "bottom")
+
+ind_comp_fig 
+```
 
 ```{r}
 state_ind_2019_clean <- ind_comp %>% 
@@ -417,10 +412,9 @@ state_ind_2019_map <- left_join(states_leaflet, state_ind_2019_clean) %>%
   filter(!is.na(ind_hhi))
 ```
 
-Now, because of differences in what we are trying to display, we will need to use new color and label defining functions to display our map. 
-
 ```{r}
-#Define Colors
+#Define Colors. Because of differences in what we are trying to display, we will need to use new color and label defining functions to display our map. 
+
 ind_colors <- colorFactor(palette = brewer.pal(12, "Paired"), domain = state_ind_2019_map$Description)
 ```
 
@@ -432,11 +426,12 @@ ind_labels <- sprintf(
   state_ind_2019_map$NAME, state_ind_2019_map$ind_hhi, state_ind_2019_map$desc_3) %>% lapply(htmltools::HTML)
 ```
 
-Having defined our color scale and labels, we can map our industry data. 
-
 **Consistent Pattern in Largest Manufacturing Industries by GDP**
 
+We see that there are some consistent patterns in the "dominant" industries across states, and that some of these patterns appear to be geographic as well (such as the chemical corridor in the Midwest extending East, and the Southwestern food and Beverage corridor)
+
 ```{r, echo = FALSE}
+#Having defined our color scale and labels, we can map our industry data. 
 state_inds <- state_ind_2019_map %>% 
   leaflet() %>% 
   addPolygons(
@@ -463,31 +458,9 @@ state_inds <- state_ind_2019_map %>%
 state_inds
 ```
 
-We see that there are some consistent patterns in the "dominant" industries across states, and that some of these patterns appear to be geographic as well (such as the chemical corridor in the Midwest extending East, and the Southwestern food and Beverage corridor)
+## Employment
 
-However, we also see that for some states, the delta between the top industry and the next highest industry is very high. This is not currently well displayed in the map, so we use a different figure to convey this information. 
-
-```{r, echo = FALSE, fig.width=11,fig.height=8}
-ind_comp_fig <- ind_comp %>% 
-  filter(ind_tal <=3) %>% 
-  rename(area_title = GeoName) %>% 
-  left_join(states) %>% 
-  filter(!is.na(state_abbr)) %>% 
-  left_join(manf_data %>% filter(year == 2019) %>%  select(state_abbr, gdp_manf)) %>% 
-  ggplot() + 
-  geom_col(aes(x = manf_ind_gdp/gdp_manf, reorder(state_abbr, state_gdp), group = state_abbr, fill = Description), position = "stack", color = "black", alpha = 0.8) + 
-  scale_fill_brewer(palette = "Paired") + 
-  labs(x = "Sub-Industry Share of Manufacturing Economy (GDP)", y = "", fill = "", title = "Some States More Concentrated than Others") + 
-  theme_bw() + 
-  axis_theme + 
-  theme(legend.position = "bottom")
-
-ind_comp_fig 
-```
-
-## Employment 
-
-We now look at industry employment by state. 
+We now look at industry employment by state.
 
 ```{r}
 state_ind_2019_emp <- ind_emp_2019 %>% 
@@ -514,7 +487,9 @@ state_ind_2019_emp <- ind_emp_2019 %>%
 state_ind_2019_emp %>% 
   filter(ind_tal_emp < 4) %>% 
   ungroup() %>% 
-  count(industry_title)
+  count(industry_title) %>% 
+  mutate(industry_title = str_sub(industry_title, 10)) %>% 
+  arrange(desc(n))
 ```
 
 ```{r}
@@ -528,22 +503,19 @@ state_ind_emp_2019_map <- left_join(states_leaflet, state_ind_2019_emp %>%
   filter(!is.na(desc_3))
 ```
 
-
 ```{r}
-#Define Colors
+#As above, we prepare a color scheme and popup for our map.
 ind_colors_emp <- colorFactor(palette = ind_emp_cols, domain = state_ind_emp_2019_map$Description)
 ```
 
 ```{r}
 #Define Labels
-
 ind_labels_emp <- sprintf(
   "<strong>%s</strong> <br/>  HHI: %g <br/> Millions of &#36 2012, Manufacturing Subsector <br/> <i> %s </i>",
   state_ind_emp_2019_map$NAME, state_ind_emp_2019_map$ind_hhi_emp, state_ind_emp_2019_map$desc_3) %>% lapply(htmltools::HTML)
 ```
 
-
-As above, we prepare a color scheme and popup for our map.
+We see that the most dominant manufacturing sub-industry by employment is different than the most dominant sub-industry by GDP, again reflecting that certain manufacturing industries are labor intensive, and some are capital intensive.
 
 **Dominant Manufacturing Sub-Industries by Employment Different than by GDP**
 
@@ -574,8 +546,6 @@ state_inds_emp %>%
   position = "bottomleft")
 ```
 
-We see that the most dominant manufacturing sub-industry by employment is different than the most dominant sub-industry by GDP, again reflecting that certain manufacturing industries are labor intensive, and some are capital intensive. 
-
 ```{r, fig.width=11,fig.height=8}
 ind_comp_emp <- state_ind_2019_emp %>% 
   filter(ind_tal_emp < 4) %>% 
@@ -585,7 +555,7 @@ ind_comp_emp <- state_ind_2019_emp %>%
   ggplot() + 
   geom_col(aes(x = ind_emp/emp, reorder(state_abbr, tot_emp), group = state_abbr, fill = Description), position = "stack", color = "black") + 
   scale_fill_brewer(palette = "Paired") + 
-  labs(x = "Industry Share of Manufacturing Economy \n(Employment)", y = "", fill = "", title = "For most states, manufacturign employment is more evenly distributed across industries") + 
+  labs(x = "Industry Share of Manufacturing Economy \n(Employment)", y = "", fill = "", title = "Manufacturing employment dominated by Food, Transportation, and Computer/Electronic sub-industries") + 
   theme_bw() + 
   axis_theme + 
   theme(legend.position = "bottom") 
@@ -593,11 +563,21 @@ ind_comp_emp <- state_ind_2019_emp %>%
 ind_comp_emp
 ```
 
+So far, we have seen evidence that states vary by their manufacturing share and size of GDP/Employment, as well as the major sub-industries that make up their manufacturing economy.
 
-We might then want to look at how the state HHI index corresponds with its "max" location quotient, which would be the industry in the state that the state has the largest share of, relative to the national average. 
+As another way to examine industry concentration in states, we might then want to look at how the state HHI index corresponds with its "max" location quotient, which would be the industry in the state that the state has the largest share of, relative to the national average.
+
+```{r}
+state_ind_benchmark <- state_ind %>% 
+  filter(year == 2019) %>%
+  rename(NAME = GeoName) %>% 
+  left_join(state_manf %>% 
+              filter(year == 2019) %>% 
+              select(NAME, manf_gdp_share, manf_emp_share, state_gdp, gdp_manf))
+```
 
 ```{r, fig.width=11,fig.height=8}
-state_ind %>% 
+state_ind_benchmark %>% 
   mutate(ind_share_state_sq = ind_share_state**2) %>% 
   group_by(area_fips) %>% 
   reframe(hhi_ind = sum(ind_share_state_sq, na.rm = TRUE), max_ind_lq = max(ind_lq)) %>% 
@@ -611,9 +591,13 @@ state_ind %>%
   axis_theme
 ```
 
+We again see evidence that some states are more concentrated than others. Once again, our challenge now lies in combining these descriptive statistics about states to start categorizing states individually. Before proceeding to that task, we explore a few more basic statistics about state manufacturing economies.
+
 # 2019 County Data
 
-Note: For now, we will use county employment data to measure the geographical composition of manufacturing across the US. In the future, we will want to change this to GDP data. 
+We now examine the geographic distribution of manufacturing in each state to understand how manufacturing activity is distributed across the state. Here, ideally, we will want to know the distribution of manufacturing activity at the sub-industry level across counties. We can use the NETS data to obtain this information.
+
+Note: For now, to establish our proof of concept we will use county employment data to measure the geographical composition of manufacturing across the US. In the future, we will want to change this to GDP data.
 
 ```{r}
 county_emp_2019 <- county_emp %>% 
@@ -628,13 +612,9 @@ county_emp_map_2019 <- left_join(
   county_leaflet %>% 
     mutate(STATEFP = as.numeric(STATEFP)), county_emp_2019
 )
+
+#With our mapping dataset constructed, we start by displaying manufacturing employment levels for each county. As before, we want to construct our color palette and label for the map. Fortunately we can use our previous function for colors. 
 ```
-
-
-With our mapping dataset constructed, we start by displaying manufacturing employment levels for each county. 
-
-
-As before, we want to construct our color palette and label for the map. Fortunately we can use our previous function for colors. 
 
 ```{r}
 county_cols <- col_def(county_emp_map_2019, emp, brewer.pal(9, "Spectral"))
@@ -646,6 +626,7 @@ county_labels <- sprintf(
   county_emp_map_2019$STATE_NAME, county_emp_map_2019$NAME, county_emp_map_2019$emp) %>% lapply(htmltools::HTML)
 ```
 
+We see that manufacturing employment is concentrated in a few specific counties, with most counties having around 50,000 estimated average monthly employees. The top manufacturing counties have more than five times this number of estimated average monthly employees.
 
 ```{r}
 county_emp_levels <- county_emp_map_2019 %>% 
@@ -675,7 +656,7 @@ county_emp_levels <- county_emp_map_2019 %>%
 county_emp_levels
 ```
 
-Having established basic levels, we now turn to investigate the county's share of state employment. 
+To account for the impact of population and normalize results across counties, we investigate the county's share of state employment. While most of the counties that dominated in terms of raw manufacturing employment also have large shares of manufacturing employment, we are able to identify new counties across regions (Northwest, Mountain West, Midwest, Southeast and Northeast) that have a higher than average manufacturing share of employment.
 
 ```{r}
 county_2019_share <- county_emp_map_2019 %>% 
@@ -685,9 +666,8 @@ county_2019_share <- county_emp_map_2019 %>%
          emp_share_perc_clean = paste(round(emp_share_perc, 2), "&#37"))
 ```
 
-Again, we define colors and labels. 
-
 ```{r}
+#Again, we define colors and labels. 
 county_cols_share <- col_def(county_2019_share, emp_share, brewer.pal(9, "Spectral"))
 ```
 
@@ -725,56 +705,142 @@ county_emp_share <- county_2019_share %>%
 county_emp_share
 ```
 
-We then display county employment location quotients following the same process as above. 
+```{r}
+county_emp_calcs <- county_emp_2019 %>% 
+  filter(!is.na(state_abbr)) %>% 
+  rename(county_emp = emp) %>% 
+  left_join(manf_data %>% filter(year == 2019) %>%  select(state_abbr, emp, tot_emp)) %>% 
+  mutate(county_share = county_emp/emp)
+```
+
+We see that some states have manufacturing employment concentrated in fewer counties than other states do.
+
+```{r, fig.width=11,fig.height=8}
+county_emp_graph <- county_emp_calcs %>% 
+  mutate(county_share = county_emp / tot_emp) %>% 
+  ggplot() + 
+  geom_col(aes(x = county_share, y = reorder(state_abbr, tot_emp), fill = county_share), color = "black") + 
+  scale_fill_distiller(palette = "Spectral") + 
+  guides(fill = "none")+ 
+  labs(x = "County manufacturing (31-33) employment share of state employment", y = "") + 
+  scale_x_continuous(labels = scales::percent) + 
+  theme_bw() + 
+  axis_theme
+
+county_emp_graph
+```
+
+We can now compare state-wise industry concentration with state-wise geographic concentration measures. We that there might be a weak inverse correlation between state industry concentration and state geographic concentration.
 
 ```{r}
-county_cols_lq <- col_def(county_2019_share, lq_emp, brewer.pal(9, "Spectral"))
+ind_comp_clean <- ind_comp %>% 
+  left_join(area_codes) %>% 
+  select(state_abbr, ind_hhi, state_gdp) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  distinct()
 ```
 
 ```{r}
-county_labels_lq <- sprintf(
-  "<strong>%s</strong> <br/> %s <br/> %s <br/> 2019 Employment Location Quotient <br/> <i> NAICS 31-33 </i>",
-  county_2019_share$STATE_NAME, county_2019_share$NAME, county_2019_share$lq_emp) %>% lapply(htmltools::HTML)
+county_ind_comp <- county_emp_calcs %>% 
+  mutate(county_share_sq = county_share**2) %>% 
+  group_by(state_abbr) %>% 
+  reframe(county_hhi = sum(county_share_sq)) %>% 
+  left_join(ind_comp_clean)
 ```
 
+```{r, fig.width=11,fig.height=8}
+concentration_comp <- county_ind_comp %>% 
+  ggplot() + 
+  geom_point(aes(x = ind_hhi, y = county_hhi)) + 
+  geom_text_repel((aes(x = ind_hhi, y = county_hhi, label = state_abbr)), size = 3) + 
+  labs(x = "Industry HHI by State", y = "County HHI by State", title = "Apparent weak inverse correlation between county concentration and industry concentration?") + 
+  theme_bw() + 
+  axis_theme
+
+concentration_comp
+```
+
+# Mix of Small and Large Establishments
+
+We now try and establish some measures around the mix of small and large establishments in a state. 
 
 ```{r}
-county_emp_lq <- county_2019_share %>% 
-  leaflet() %>% 
-  setView(-97.59211, 37.91239, zoom = 4) %>% 
-  addPolygons(
-  fillColor = ~county_cols_lq(county_2019_share$lq_emp),
-  weight = 1,
-  opacity = 0.5,
-  color = "black",
-  dashArray = "3",
-  fillOpacity = 0.7, 
-  highlightOptions = highlightOptions(
-    weight = 5,
-    color = "#666",
-    dashArray = "",
-    fillOpacity = 0.7,
-    bringToFront = TRUE),
-  label = county_labels_lq,
-  labelOptions = labelOptions(
-    style = list("font-weight" = "normal", padding = "3px 8px"),
-    textsize = "15px",
-    direction = "auto"))  %>% 
-  addLegend(pal = county_cols_lq, values = county_2019_share$lq_emp, opacity = 0.7, title = "2019 NAICS 31-33 <br/> Employment Location Quotient",
-  position = "bottomleft")
-
-county_emp_lq
+#import previously constructed data 
+size_all_clean <- readRDS(here("State Data/qcew_size.RDS"))
 ```
 
 
+We note that because of disclosure issues in the data, the establishment level variable is more accurate than the employment level variable. We now have a dataset where we can explore the distribution of firms of different sizes across the economy as a whole (all industries), and across the manufacturing industry (NAICS 31-33). 
+
+First, we explore how the distribution of firm size varies between the manufacturing sector and the state economy as a whole. Because there are so many more small firms, we examine the distribution of establishments in the log scale. We see that the variance of the distribution of establishment size is higher in the manufacturing sector than in the state economy as a whole. 
+
+```{r, fig.width=11,fig.height=8}
+ind_size_all <- size_all_clean %>% 
+  filter(year == 2019) %>% 
+  left_join(area_codes) %>% 
+  left_join(manf_data %>% select(area_fips, year, state_gdp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = log(estabs), y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code)), color = "black") + 
+  facet_wrap(~industry_title) + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Log Establishments in State, by Industry", y = "", fill = "", title = "State Patterns of Establishment Size Similar Across:\n Manufacturing, All Industries") + 
+  guides(fill = guide_legend(reverse = TRUE)) + 
+  theme_bw() + 
+  axis_theme 
+
+ind_size_all
+```
+
+
+As per Fuchs et al, 2020, the manufacturing sector differs from the rest of the economy in that the density of firms is not monotonically decreasing with firm size. However, this pattern is only broken in a few states. While we might want to test the relationship between the distribution of firm size in manufacturing compared to the rest of the state in robusteness checks, we save this task for later. 
+
+```{r}
+manf_size_all <- size_all_clean %>% 
+  filter(year == 2019, industry_code == "31-33") %>% 
+  left_join(area_codes) %>% 
+  left_join(manf_data %>% select(area_fips, year, state_gdp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = log(estabs), y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code)), color = "black") + 
+  facet_wrap(~industry_title) + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Log Manufacturing Establishments in State, by Size", y = "", fill = "", title = "Not all states have very large establishments") + 
+  guides(fill = guide_legend(reverse = TRUE)) + 
+  theme_bw() + 
+  axis_theme 
+
+manf_size_all
+```
+
+We see that not all states have very large manufacturing establishments (either 500 or greater, or 1000 or greater). 
+
+Based on how distributions group together, we propose simplifying our size categories: 1) small establishments (<5 to 20 employees); 2) medium establishments (20 to 100 employees); 3) large firms (100 to 250 employees; 4) large firms (250 )
+
+We have three potential measures that we might test 1) The ratio of very large to medium sized firms; 2) the ratio of very large to small sized firms; 3) the ratio of very large and medium to small sized firms. We are still in the process of trying to best capture information about the distribution of firm size across states in our categorization of state manufacturing economies. 
+
+```{r}
+size_clean_total <- size_all_clean %>% 
+  filter(industry_title == "Total, all industries") %>% 
+  ungroup() %>% 
+  select(year, area_fips, size_code, estabs_total = estabs, emp_total = tot_emp, estab_share_total = estab_share) %>% 
+  distinct() %>% 
+  left_join(size_all_clean %>% 
+              rename(manf_estabs = estabs, emp_manf = tot_emp, estab_share_manf = estab_share))
+  
+```
 
 # Trends
 
-From here, we've established basic levels in 2019 for the manufacturing state of the economy, and can now explore how the manufacturing economy in each state has grown between 2010 and 2019. 
+At this point, we've established basic levels in 2019 for the manufacturing state of the economy, and can now explore how the manufacturing economy in each state has grown between 2010 and 2019.
 
-To accomplish this, we will bring back some functions we defined in previous work. 
+Nationwide, while the size of the manufacturing sector (in GDP) has been increasing, the manufacturing share of both GDP and employment has been declining since 2010. In this interval, manufacturing GDP has lagged slightly behind nationwide GDP between 2010 and 2019, as shown below.
+
+![National trends in manufacturing and overall employment and GDP](Images/nat_trends.png)
+
 
 ```{r}
+#To accomplish this, we will bring back some functions we defined in previous work. 
 manf_state_calc <- function(data, min_year, max_year, sel_vars, mut_vars){ 
   
   data %>% 
@@ -786,8 +852,6 @@ manf_state_calc <- function(data, min_year, max_year, sel_vars, mut_vars){
 
 }
 ```
-
-
 
 ```{r}
 change_calc_emp <- function(data, min_year, max_year){ 
@@ -809,7 +873,6 @@ change_calc_emp <- function(data, min_year, max_year){
   }
 ```
 
-
 ```{r}
 change_calc_gdp <- function(data, min_year, max_year){ 
   data %>% 
@@ -830,8 +893,7 @@ change_calc_gdp <- function(data, min_year, max_year){
   }
 ```
 
-
-We start by examining the percent change in the size of the manufacturing economy between 2010 and 2019. 
+However, state trends do not always follow national trends. In terms of GDP, a few western states saw the highest percent change in annual GDP, while a few states such as Louisiana shrink. 
 
 ```{r}
 trends_data_2010_2019 <- state_manf %>%
@@ -864,6 +926,8 @@ gdp_change_2010_2019
 
 ## 2010-2019 Emp % Change
 
+When looking at employment trends, almost all states saw an increase in absolute monthly manufacturing employment. However, different regions saw more relative growth in manufacturing employment than the set of regions that saw relative growth in manufacturing GDP. 
+
 **Almost all states see positive changes in manufacturing employment, regionally different than manufacturing GDP**
 
 ```{r}
@@ -872,7 +936,7 @@ emp_change_2010_2019 <- build_map(trends_data_2010_2019, emp_perc, emp_perc_clea
 emp_change_2010_2019
 ```
 
-We can also then examine the corrleation between percentage change in NAICS 31-33 employment and percentage change in GDP. 
+We can also then examine the corrleation between percentage change in NAICS 31-33 employment and percentage change in GDP. We see that these measures are roughly correlated. 
 
 ```{r, fig.width=11,fig.height=8}
 gdp_emp_trends <- trends_data_2010_2019 %>% 
@@ -882,6 +946,8 @@ gdp_emp_trends <- trends_data_2010_2019 %>%
   ggplot() + 
   geom_point(aes(emp_perc, gdp_manf_perc, size = state_gdp), shape = 21, alpha = 0.7, color = "black", fill = brewer.pal(9, "Set3")[1]) + 
   geom_text_repel(aes(emp_perc, gdp_manf_perc, label = state_abbr)) + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
   labs(x = "2010 to 2019 Percent Change in NAICS 31-33 Employment", y = "2010 to 2019 Percent Change in NAICS 31-33 GDP") + 
   theme_bw() + 
   axis_theme + 
@@ -890,11 +956,9 @@ gdp_emp_trends <- trends_data_2010_2019 %>%
 gdp_emp_trends
 ```
 
+We now want to benchmark changes in the manufacturing sector against changes in the state economy as a whole. 
 
-We now want to benchmark changes in the manufacturing sector against changes in the state economy as a whole. At this point we realize that we need to define a new legend. Earlier, we tried to create a way to dynamically define a label by wrapping the build_map() function in a label function, but this effort failed. As such, we will continue to explicitly define the label and rewrite the build_map() function accordingly. 
-
-We begin with a summary graph of the trend we are attempting to show. 
-
+We begin with a summary graph of the trend we are attempting to show.
 
 ```{r}
 trends_map_2010_2019 <- trends_data_2010_2019 %>% 
@@ -911,25 +975,7 @@ trends_map_2010_2019 <- trends_data_2010_2019 %>%
 
 ## 2010-2019 Manufacturing GDP % Change v. State GDP % Change
 
-```{r}
-state_change <- trends_map_2010_2019 %>% 
-  ggplot() + 
-   geom_segment(aes(x = reorder(state_abbr, state_gdp), y = gdp_manf_perc, xend = reorder(state_abbr, state_gdp), yend = state_gdp_perc, color = manf_sign), size = 2) +
-  geom_point(aes(x = reorder(state_abbr, state_gdp), y = gdp_manf_perc), size = 4, shape = 21, color = "black", fill = manf_col) + 
-  geom_point(aes(x = reorder(state_abbr, state_gdp), y = state_gdp_perc), size = 3, shape = 21, color = "black", fill = total_col) + 
-  geom_hline(yintercept = 0, color = "black") + 
-  guides(fill = "none", color = "none") + 
-  scale_color_manual(values = c(total_col, manf_col))+
-  labs(x = "", y = "Percent Change in GDP, 2010 - 2019", title = "Certain States see Manufacturing sector grow faster than the State Economy") + 
-  coord_flip() + 
-  theme_bw() + 
-  axis_theme
-
-state_change
-```
-
-
-We can also view this data differently. 
+Certain States see their manufacturing sector grow faster than the State Economy.
 
 ```{r}
 state_manf_gdp <- trends_map_2010_2019 %>% 
@@ -948,10 +994,10 @@ state_manf_gdp
   
 ```
 
-To refelect this in leaflet, we need to create one variable that can capture our desired information, and map it to a color. 
+We can also create a map that allows us to visualize the difference between growth in the manufacturing sector, and growth in the state economy. 
 
 ```{r}
-state_benchmark_col <- colorNumeric(palette ="YlOrBr", domain = trends_map_2010_2019$manf_state_dif)
+state_benchmark_col <- colorNumeric(palette ="BrBG", domain = trends_map_2010_2019$manf_state_dif)
 ```
 
 ```{r}
@@ -963,7 +1009,6 @@ nat_sum <- nat_gdp %>%
   mutate(manf_state_dif = state_gdp - gdp_manf, 
          nat_manf_clean = paste(round(manf_state_dif*100, 2), "&#37"))
 ```
-
 
 ```{r}
 label_popup <- sprintf(
@@ -999,5 +1044,10 @@ state_manf_2010_2019 <- trends_map_2010_2019 %>%
 ```{r}
 state_manf_2010_2019
 ```
+
+Using the above mentioned trends, we can sort states into our first set of discrete categories based on the change in their manufacturing economy between 2010 and 2019. The next step will be to merge these categories with the previously established measures of manufacturing industry and geographic concentration, as well as the mix of small and large firms. 
+
+![States can be categorized based on how their manufacturing economy changed between 2010 and 2019](Images/state_cats_1.png)
+
 
 

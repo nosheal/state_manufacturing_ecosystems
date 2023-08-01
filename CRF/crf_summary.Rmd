@@ -958,6 +958,13 @@ ppe_projects <- project_match_final %>%
 We first examine how PPE projects are distributed across discrete spending categories. 
 
 ```{r}
+ppe_projects %>% 
+  reframe(dollars_spent = sum(dollars_spent)) 
+```
+
+States spent a total of 5,077,949,705 (or just over $5 Billion) on potentially PPE related expenditures. 
+
+```{r}
 ppe_projects_category <- ppe_projects %>% 
   group_by(Spending.category) %>% 
   reframe(dollars_spent = sum(dollars_spent)) %>% 
@@ -977,6 +984,7 @@ ppe_projects_category
 Unsurprisingly the "Personal Protective Equipment" spending category describes most of the possible PPE expenditures in our dataset. 
 
 As such, we can exlude this category to explore how PPE expenditures might be distributed across other spending categories. 
+
 
 ```{r}
 ppe_projects %>% 
@@ -1032,6 +1040,63 @@ ppe_projects %>%
   axis_theme
 ```
 
+## Manufacturers
+
+We now test a slightly different definition of spending contracts of interest, focusing instead on support for manufacturers, producers, and the like. 
+
+```{r}
+manf_words <- c("manufactur", "retool", "production", "procurement")
+```
+
+```{r}
+project_manf <- project_match_final %>% 
+  mutate(proj_lower = tolower(Project.description),
+    manf_match = case_when(
+    str_detect(proj_lower, paste(manf_words, collapse = "|")) ~ 1
+  ), 
+  ppe_match = case_when(
+    str_detect(proj_lower, paste(ppe_words, collapse = "|")) | Spending.category == "Personal Protective Equipment" ~ 1
+  )) %>% 
+  filter(manf_match == 1) %>% 
+  mutate(Spending.category = case_when(
+    Spending.category == "" ~ "Unknown", 
+    TRUE ~ Spending.category
+  )) 
+```
+
+```{r}
+project_manf %>% 
+  filter(is.na(ppe_match)) %>% 
+  group_by(Project.description) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  distinct() 
+  
+```
+
+
+```{r}
+project_manf %>% 
+  reframe(dollars_spent = sum(dollars_spent)) 
+```
+
+States spent \$393,328,066 (or just under \$400 million) on contracts related to manufacturing/production. Of this, 40,809,231 are not accounted for by the PPE indicator. 
+
+```{r}
+manf_proj_check <- project_manf %>% 
+  group_by(Spending.category) %>% 
+  reframe(dollars_spent = sum(dollars_spent)) %>% 
+  ggplot() + 
+  geom_col(aes(reorder(Spending.category, dollars_spent), y = dollars_spent, fill = Spending.category), color = "black") + 
+  coord_flip() + 
+  scale_fill_manual(values = cat_scale) + 
+  scale_y_continuous(labels = scales::unit_format(unit = "$M", scale = 1e-6)) +
+  labs(y = "Manufacturing, Production, and Procurement Related Spending", x = "") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+manf_proj_check
+```
 
 
 ## Match to Manufactures 
@@ -1114,6 +1179,27 @@ project_manf_match <- ppe_projects%>%
 
 ```{r}
 conf_projs <- project_manf_match %>% 
+  mutate(dom_useful_num = case_when(
+    is.na(dom_useful_num) ~ -1, 
+    TRUE ~ dom_useful_num
+  )) %>% 
+  group_by(dom_useful_num, state_abbr_prime) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num)), color = "black") + 
+  
+  scale_fill_manual(values = c("darkgrey","lightgrey", brewer.pal(8, "Dark2")[1] )) + 
+  labs(x = "Number of projects to known manufacturers / distributors", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+conf_projs
+```
+
+```{r}
+project_manf_match %>%
   filter(!is.na(dom_useful_num)) %>% 
   group_by(dom_useful_num, state_abbr_prime) %>%
   reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
@@ -1121,14 +1207,31 @@ conf_projs <- project_manf_match %>%
   left_join(state_awardees) %>% 
   ggplot() + 
   geom_col(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num)), color = "black") + 
-  geom_label(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num), label = companies), position = "stack", size = 4) + 
-  scale_fill_manual(values = c("lightgrey", brewer.pal(8, "Dark2")[1])) + 
+  
+  scale_fill_manual(values = c("lightgrey", brewer.pal(8, "Dark2")[1] )) + 
   labs(x = "Number of projects to known manufacturers / distributors", y = "") + 
-  guides(fill = "none") + 
   theme_bw() + 
   axis_theme
+geom_label(aes(x = companies, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num), label = companies), position = "stack", size = 4) 
+```
 
-conf_projs
+```{r}
+project_manf_match %>% 
+  mutate(dom_useful_num = case_when(
+    is.na(dom_useful_num) ~ -1, 
+    TRUE ~ dom_useful_num
+  )) %>% 
+  group_by(dom_useful_num, state_abbr_prime) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent, y = reorder(state_abbr, state_total_allocation), fill = as.factor(dom_useful_num)), color = "black") + 
+  
+  scale_fill_manual(values = c("darkgrey","lightgrey", brewer.pal(8, "Dark2")[1] )) + 
+  labs(x = "Number of projects to known manufacturers / distributors", y = "") + 
+  theme_bw() + 
+  axis_theme
 ```
 
 
@@ -1205,5 +1308,51 @@ manf_size <- projects_match_size %>%
   axis_theme
 
 manf_size
+```
+
+
+### Spending Category
+
+```{r}
+projects_match_size %>% 
+  filter(!is.na(dom_useful_num)) %>% 
+  group_by(dom_manf, state_abbr_prime, Spending.category) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), companies = n()) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  left_join(state_awardees) %>% 
+  ggplot() + 
+  geom_col(aes(x = dollars_spent, y = reorder(state_abbr, state_total_allocation), fill = Spending.category), color = "black") +
+  scale_fill_manual(values = cat_scale) + 
+  labs(x = "Dollars Spent on known manufacturers / distributors", y = "", fill = "Annual Firm Sales (DB Hoovers)") + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$M", scale = 1e-6)) +
+  theme_bw() + 
+  facet_wrap(~dom_manf) + 
+  axis_theme
+```
+
+### Number of Known Manufacturers/distributors
+
+```{r}
+individual_companies <- projects_match_size %>% 
+  filter(!is.na(dom_useful_num)) %>% 
+  group_by(original_company_name, state_abbr_prime) %>%
+  reframe(dollars_spent = sum(dollars_spent, na.rm = TRUE), awards = n(), dom_useful = dom_useful_num) %>%
+  rename(state_abbr = state_abbr_prime) %>% 
+  distinct() %>% 
+  mutate(dom_manf = case_when(
+    dom_useful == 1 ~ "Known Domestic Manufacturer", 
+    dom_useful == 0 ~ "Distributor, Wholesaler, or \nForeign Manufacturer"
+  )) %>%  
+  ggplot() + 
+  geom_point(aes(x = dollars_spent, y = original_company_name, fill = state_abbr), alpha = 0.7, shape = 21, color = "black", size = 4) + 
+  geom_text_repel(aes(x = dollars_spent, y = original_company_name, label = state_abbr)) + 
+  facet_wrap(~dom_manf) + 
+  scale_x_continuous(labels = scales::unit_format(unit = "$M", scale = 1e-6)) +
+  guides(fill = "none") + 
+  labs(x = "State Dollars Spent on Potentially PPE related Contracts", y = "Company Name") +
+  theme_bw() + 
+  axis_theme
+
+individual_companies
 ```
 

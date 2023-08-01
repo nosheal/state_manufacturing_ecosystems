@@ -102,6 +102,12 @@ project_details <- read.csv(here("CRF/Project Details.csv"))
 ```
 
 ```{r}
+project_finaces <- read.csv(here("CRF/project_finances.csv"))
+```
+
+
+
+```{r}
 crf_payments <- read_xlsx(here("CRF/crf_payments.xlsx"))
 ```
 
@@ -116,7 +122,7 @@ crf_payments %>%
 
 ```{r}
 ppe_projects <- project_details %>% 
-  filter(str_detect(Project.description, "PPE")) %>% 
+  filter(str_detect(Project.description, "PPE") | Spending.category == "Personal Protective Equipment") %>% 
   group_by(Sub.recipient, Award.number) %>% 
   reframe(award_dollars = sum(Sub.award.amount), spent_dollars = sum(Money.spent.to.date), Project.description, Award.description, Spending.category) %>% 
   filter(str_detect(Spending.category, "Select", negate = TRUE))
@@ -136,6 +142,12 @@ token_list_broad <- c("Unemployment Benefits", "facilitate Distance Learning", "
 ```{r}
 ppe_projects_short <- ppe_projects %>% 
   filter(!Spending.category %in% token_list_broad)
+```
+
+```{r}
+ppe_projects_loc <- project_finaces %>% 
+  select(Sub.recipient, Award.number, Award.type, Location.info, County) %>% 
+  left_join(ppe_projects_short, .) 
 ```
 
 
@@ -170,21 +182,49 @@ mask_sample %>%
 ```
 
 ```{r}
-remove <- c("Limited" ,"Ltd", "LTD", "Incorporated", "Company",  "Corporation", "Co", "Inc",  "[[:punct:]]", "LLC", "INC")
+remove <- c("Limited" ,"Ltd", "LTD", "Incorporated", "Company",  "Corporation", "Co", "Inc",  "[[:punct:]]", "LLC", "INC", "company", "COMPANY", "CORPORATION")
 ```
 
 
 ```{r}
 mask_comps <- mask_sample %>% 
-  select(dom_useful_num, original_company_name) %>% 
-    mutate(comp_match = tolower(str_trim(str_remove_all(original_company_name, paste(remove, collapse = "|")))))
+  mutate(reg_appr = case_when(
+    niosh_counter == TRUE | fda_counter == TRUE ~ 1
+  )) %>% 
+  select(dom_useful_num, original_company_name, address, DUNS, corporate_family_dbh, sales_dbh, state_abbr, reg_appr, min_date, desc) %>% 
+    mutate(comp_match = tolower(str_trim(str_remove_all(original_company_name, paste(remove, collapse = "|"))))) 
 ```
 
 ```{r}
-ppe_projects_short %>% 
-  select(Sub.recipient) %>% 
-  distinct() %>% 
-  mutate(comp_match = tolower(str_trim(str_remove_all(Sub.recipient, paste(remove, collapse = "|"))))) %>% 
+simplify <- function(string){ 
+  
+  tolower(str_trim(str_remove_all(string, paste(remove, collapse = "|"))))
+  
+  
+}
+```
+
+```{r}
+ppe_projects_loc %>% 
+  filter(str_detect(Sub.recipient, "CITY OF|TOWN OF|SCHOOL", negate = TRUE)) %>% 
+  mutate(comp_match = simplify(Sub.recipient)) %>% 
+  mutate(comp_match = simplify(Sub.recipient), 
+        Sub.recipient = str_remove_all(Sub.recipient, "[[:punct:]]")) %>% 
+  mutate(comp_match = case_when(
+  str_detect("DENTEC", Sub.recipient) ~ "dentec safety specialists",
+  str_detect("HONEYWELL", Sub.recipient) ~ "honeywell safety products",
+  str_detect("KIMBERLY CLARK", Sub.recipient) ~ "kimberlyclark",
+  str_detect("GERSON", Sub.recipient) ~ "louis m gerson",
+  str_detect("MOLDEX", Sub.recipient) ~ "moldex", 
+  str_detect("HALYARD", Sub.recipient) ~ "om halyard", 
+  str_detect("THOMAS SCIENTIFIC", Sub.recipient) ~ "thomas scientific",
+  str_detect("MASTER BRANDS", Sub.recipient) ~ "master brands health",
+  str_detect("FAIRFIELD PROCESSING", Sub.recipient) ~ "fairfield processing", 
+  str_detect("MERROW", Sub.recipient) ~ "merrow ppe", 
+  str_detect("FISHER S|FISHER H", Sub.recipient) ~ "thermo fisher scientific", 
+  str_detect("SKINNY", Sub.recipient) ~ "skinny",
+  str_detect("MARK ONE", Sub.recipient) ~ "mark one medical", 
+  TRUE ~ comp_match)) %>% 
   left_join(mask_comps) %>% 
   view()
   

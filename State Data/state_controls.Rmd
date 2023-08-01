@@ -381,6 +381,142 @@ qcew_state <- state_2010 %>%
 saveRDS(qcew_state, here("State Data/qcew_state.RDS"))
 ```
 
+#QCEW Size Data
+
+We now bring in data about establishment sizes from the QCEW. We note that these data are only available for the first quarter of the year.
+
+```{r}
+years <- c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2020", "2021")
+```
+
+
+```{r}
+read_zip_url <- function(url){ 
+  zipfile <- tempfile(fileext = ".zip")
+  download.file(url, zipfile, mode = "wb") 
+  df <- read_csv(zipfile)
+  
+  }
+```
+
+```{r}
+test <- read_zip_url("https://data.bls.gov/cew/data/files/2019/csv/2019_q1_by_size.zip")
+```
+
+```{r}
+size_2019_raw <- test %>% 
+  filter(industry_code %in% c("10", "31-33", "1013")) %>% 
+  mutate(tot_emp = month1_emplvl + month2_emplvl + month3_emplvl, 
+           emp_avg = tot_emp/3) %>% 
+    select(area_fips, industry_code, year, size_code, disclosure_code, industry_title, size_title, estabs = qtrly_estabs_count, wages = total_qtrly_wages, tot_emp, emp_avg) 
+```
+
+
+```{r}
+size_all <- size_2019_raw
+```
+
+
+```{r}
+for(z in 1:length(years)){
+  url <- paste("https://data.bls.gov/cew/data/files/", years[z], "/csv/", years[z], "_q1_by_size.zip", sep = "")
+  
+  df <- read_zip_url(url)
+  
+  df <- df %>% 
+    filter(industry_code %in% c("10", "31-33")) %>% 
+    mutate(tot_emp = month1_emplvl + month2_emplvl + month3_emplvl, 
+           emp_avg = tot_emp/3) %>% 
+    select(area_fips, industry_code, year, size_code, disclosure_code, industry_title, size_title, estabs = qtrly_estabs_count, wages = total_qtrly_wages, tot_emp, emp_avg) 
+  
+  size_all <- bind_rows(size_all, df)
+  
+}
+
+```
+We confirm we have roughly a consistent amount of data per year. 
+
+```{r}
+size_all %>% 
+  group_by(year) %>% 
+  count()
+```
+
+
+
+We start by collecting some statewide totals to benchmark the share of state employment and establishments from firms of different sizes. 
+
+```{r}
+#We will use suffixes (e.g _manf) to denote a filter class, and prefixes (e.g tot) to denote operations such as sums. 
+
+size_all_clean <- size_all %>% 
+  group_by(year, area_fips, industry_code, industry_title) %>% 
+  mutate(tot_estabs = sum(estabs, na.rm = TRUE), 
+         estab_share = estabs/tot_estabs) %>% 
+  filter(industry_code != "1013")
+```
+
+
+And then save this data frame. 
+
+```{r}
+size_all_clean %>% 
+  saveRDS(here("State Data/qcew_size.RDS"))
+```
+
+We note that because of disclosure issues in the data, the establishment level variable is more accurate than the employment level variable. 
+
+We now have a dataset where we can explore the distribution of firms of different sizes across the economy as a whole (all industries), and across the manufacturing industry (NAICS 31-33). 
+
+We are primarily interested in focusing on employment and establishments in the manufacturing sector. 
+
+At this point, we need to think about what is it about the composition of small to large firms that we most care about. 
+
+Hypothesis 1) The ratio of very large to medium sized firms; 2) the ratio of very large to small sized firms; 3) the ratio of very large and medium to small sized firms. 
+
+```{r}
+# Need to order by size of the state economy. 
+
+size_all_clean %>% 
+  filter(year == 2019) %>% 
+  left_join(area_codes) %>% 
+  left_join(manf_data %>% select(area_fips, year, state_gdp)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = estab_share, y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code))) + 
+  facet_wrap(~industry_title) + 
+  scale_fill_brewer(palette = "Paired") + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Percent of Establishments in State", y = "", fill = "") + 
+  theme_bw() + 
+  axis_theme
+  
+```
+
+
+To help with this analysis we can simplify the size categories. Currently, there are five size categories: 
+
+```{r}
+unique(size_all$size_title)
+```
+
+We can try concatenate this to three categories: 1) small sized firms (<5 to 50 employees); 2) medium sized firms (50 to 250 employees); 3) large sized firms (200 + firms)
+
+Q: DO WE CARE ABOUT WHAT PERCENT OF ESTABLISHMENTS OF THAT SIZE MANUFACTURING FIRMS ARE? 
+
+
+
+
+```{r}
+size_clean_total <- size_all_clean %>% 
+  filter(industry_title == "Total, all industries") %>% 
+  ungroup() %>% 
+  select(year, area_fips, size_code, estabs_total = estabs, emp_total = tot_emp, estab_share_total = estab_share) %>% 
+  distinct() %>% 
+  left_join(size_all_clean %>% 
+              rename(manf_estabs = estabs, emp_manf = tot_emp, estab_share_manf = estab_share))
+  
+```
 # BDS Data
 
 We now obtain Business Dynamics Statistics Data, and focus on a coarse breakdown of firm entry and exit by state, firm size, and sector. 
