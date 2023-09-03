@@ -261,7 +261,9 @@ build_map <- function(data, var1, label_var, colors, text, sector, legend_title)
 **Manufacturing employment is concentrated in a few states**
 
 ```{r, echo = FALSE}
-build_map(state_manf_2019, emp, emp_thousands, "BuPu", "Avg Monthly Emploment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Monthly Employees")
+emp_2019 <- build_map(state_manf_2019, emp, emp_thousands, "BuPu", "Avg Monthly Emploment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Monthly Employees")
+
+emp_2019
 ```
 
 In terms of absolute numbers, we see that manufacturing employment is dominated by the larger economies (Texas and California), but we also see that there is a substantial amount of manufacturing employment in the midwest region.
@@ -297,11 +299,12 @@ gdp_emp_2019 <- state_manf_2019 %>%
   geom_point(shape = 21, aes(x = gdp_manf, y = emp, size = state_gdp), fill = brewer.pal(9, "Set3")[1], color = "black") + 
   scale_x_continuous(labels = scales::unit_format(unit = "$B", scale = 1e-4)) + 
   scale_y_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3)) + 
-  labs(x = "NAICS 31-33 Annual GDP in Billions of $2012", y = "NAICS 31-33 Average Monthly Employees, Thousands") + 
+  geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.overlaps = 30) + 
+  labs(x = "NAICS 31-33 Annual GDP in Billions of $2012", y = "NAICS 31-33 Average Monthly Employees, Thousands", title = "Manufacturing GDP and Employment Tightly Correlated") + 
   guides(size = "none") + 
   theme_bw()
 
-gdp_emp_2019 + geom_text_repel(aes(x = gdp_manf, y = emp, label = STUSPS), max.overlaps = 30) + labs(title = "Manufacturing GDP and Employment Tightly Correlated")
+gdp_emp_2019 
 ```
 
 ## 2019 Manufacturing Share
@@ -866,10 +869,12 @@ county_ind_comp <- county_emp_calcs %>%
 
 ```{r, fig.width=11,fig.height=8}
 concentration_comp <- county_ind_comp %>% 
+  left_join(state_categorization_2019 %>% select(state_abbr, state_quadrant)) %>%
   ggplot() + 
-  geom_point(aes(x = ind_hhi, y = county_hhi)) + 
+  geom_point(aes(x = ind_hhi, y = county_hhi, fill = state_quadrant), shape = 21, size = 3) + 
   geom_text_repel((aes(x = ind_hhi, y = county_hhi, label = state_abbr)), size = 3) + 
-  labs(x = "Industry HHI by State", y = "County HHI by State", title = "Apparent weak inverse correlation between county concentration and industry concentration?") + 
+  labs(x = "Industry HHI by State", y = "County HHI by State", title = "Apparent weak inverse correlation between county concentration and industry concentration?", fill = "2019 State Manufacturing Share Benchmark") + 
+  scale_fill_brewer(palette = "Set1") + 
   theme_bw() + 
   axis_theme
 
@@ -900,7 +905,7 @@ ind_size_all <- size_all_clean %>%
   geom_col(aes(x = log(estabs), y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code)), color = "black") + 
   facet_wrap(~industry_title) + 
   scale_fill_brewer(palette = "Paired") + 
-  labs(x = "Log Establishments in State, by Industry", y = "", fill = "", title = "State Patterns of Establishment Size Similar Across:\n Manufacturing, All Industries") + 
+  labs(x = "Log Establishments in State, by Industry", y = "", fill = "") + 
   guides(fill = guide_legend(reverse = TRUE)) + 
   theme_bw() + 
   axis_theme 
@@ -929,11 +934,11 @@ size_manf_clean <- size_all_clean %>%
 manf_size_all <- size_all_clean %>% 
   filter(year == 2019, industry_code == "31-33") %>% 
   left_join(area_codes) %>% 
-  left_join(manf_data %>% select(area_fips, year, state_gdp)) %>% 
+  left_join(state_categorization_2019 %>% select(area_fips, year, state_gdp, state_quadrant)) %>% 
   filter(!is.na(state_abbr)) %>% 
   ggplot() + 
   geom_col(aes(x = log(estabs), y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code)), color = "black") + 
-  facet_wrap(~industry_title) + 
+  facet_wrap(~state_quadrant) + 
   scale_fill_brewer(palette = "Paired") + 
   labs(x = "Log Manufacturing Establishments in State, by Size", y = "", fill = "", title = "Not all states have very large establishments") + 
   guides(fill = guide_legend(reverse = TRUE)) + 
@@ -1315,4 +1320,351 @@ Using the above mentioned trends, we can sort states into our first set of discr
 ![States can be categorized based on how their manufacturing economy changed between 2010 and 2019](Images/state_cats_1.png)
 
 
+## Industrial Composition Trends 
 
+Because of our above findings (or lack-thereof) about industrial concentration and growth, we now explore sub-sector industrial composition trends within the manufacturing sector. 
+
+```{r}
+library(geofacet)
+```
+
+```{r}
+n <- 19
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+```
+
+```{r}
+ind_time_gdp <- state_ind %>% 
+  mutate(Description = str_remove(Description, "manufacturing")) %>% 
+  rename(area_title = GeoName) %>% 
+  left_join(area_codes) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  left_join(manf_data %>% select(state_abbr, year, gdp_manf)) %>% 
+  group_by(state_abbr, year) %>%  
+  mutate(manf_gdp = sum(manf_ind_gdp), 
+         ind_manf_perc = manf_ind_gdp / manf_gdp) 
+```
+
+```{r}
+library(plotly)
+```
+
+
+
+```{r,  fig.width=11,fig.height=8}
+ind_subsector_time <- ind_time_gdp %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = sub_sector_share, fill = Description), color = "black") + 
+  scale_fill_manual(values = col_vector) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State Manufacturing GDP") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+
+ind_time_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
+
+ind_time_geo
+```
+
+```{r}
+ind_time_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
+ind_time_states <- ind_subsector_time + facet_wrap(~state_abbr)
+```
+
+```{r}
+ggplotly(ind_time_states)
+```
+
+
+```{r,  fig.width=11,fig.height=8}
+ind_subsector_time <- ind_time_gdp %>% 
+  mutate(sub_sector_share = 100*ind_share_state) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = sub_sector_share, fill = Description)) + 
+  scale_fill_manual(values = col_vector) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State GDP") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+
+ind_state_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
+
+ind_state_geo
+```
+
+We see that the industrial composition of states changes heterogeneously, and for some states - dramatically, over time. In addition, it appears that certain manufacturing sectors (such as petroleum, food and beverage, and computer and electronic products). As such, we might need to create a sub-sector level measure of "stability", and then examine state-level variance in across sub-sectors that controls for the sub-sector level measure of "stability." 
+
+Indeed, we confirm that some manufacturing sub-sectors have a much greater standard deviation across years than others. For ease of comparison, we benchmark sub-sector variation against the mean of variation to create an index. Based on a preliminary analysis, we see that for some states and sub-sectors (e.g Paper manufacturing in Montana), there is a substantial drop between 2010 and 2011. To account for these outliers, we might want to drop the year 2010 from our data. 
+
+```{r}
+ind_time_gdp_na <- ind_time_gdp %>% 
+  filter(year < 2020 & year > 2010) %>% 
+  mutate(manf_ind_gdp = case_when(
+    manf_ind_gdp == 0 ~ NA_real_, 
+    manf_ind_gdp != 0 ~ manf_ind_gdp
+  ))
+```
+
+
+```{r}
+subsector_gdp <- ind_time_gdp_na %>% 
+  group_by(Description, year) %>%
+  reframe(subsector_gdp = sum(manf_ind_gdp, na.rm = TRUE))
+```
+
+
+```{r}
+ind_var <- subsector_gdp %>% 
+  group_by(Description) %>% 
+  reframe(subsector_gdp_var = sd(subsector_gdp, na.rm = TRUE)) %>% 
+  left_join(subsector_gdp %>% 
+              group_by(Description) %>% 
+              reframe(subsector_gdp_mean = mean(subsector_gdp, na.rm = TRUE))) %>% 
+  ungroup() %>% 
+  mutate(mean_var = mean(subsector_gdp_var, na.rm = TRUE), 
+         var_index_sector = subsector_gdp_var / mean_var, 
+         var_perc_sector = subsector_gdp_var / subsector_gdp_mean)
+```
+
+**Some sub-sectors have higher "volatility" accross years than others**
+
+```{r}
+ind_var_index <- ind_var %>% 
+  ggplot() + 
+  geom_col(aes(x = var_index_sector, y = reorder(Description, var_index_sector)), alpha = 0.7, color = "black") + 
+  labs(x = "Standard Deviation in Sub-Sector GDP as \n 
+       Index of Mean SD across sub-sectors (Mean = 7751.957) \n2010-2019", y = "Manufacturing Sub-Sector GDP (3-Digit)") + 
+  theme_bw() + 
+  axis_theme
+
+ind_var_index
+```
+
+```{r}
+ind_var_perc <- ind_var %>% 
+  ggplot() + 
+  geom_col(aes(x = var_perc_sector, y = reorder(Description, var_perc_sector)), alpha = 0.7, color = "black") + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Standard Deviation in Sub-Sector GDP as \n 
+       % of Average Sub-Sector GDP \n2010-2019", y = "Manufacturing Sub-Sector GDP (3-Digit)") + 
+  theme_bw() + 
+  axis_theme
+
+ind_var_perc
+```
+
+
+We can then benchmark state-level variation in sub-sector GDP against sub-sector level variation to understand which states have higher than expected variance in sub-sector GDP than would be otherwise expected. 
+
+```{r}
+subsector_state_benchmarks <- ind_time_gdp_na %>% 
+  filter(year < 2020 & year > 2010) %>% 
+  group_by(Description, state_abbr) %>%
+  reframe(subsector_gdp_var_state = sd(manf_ind_gdp, na.rm = TRUE)) %>% 
+  left_join(ind_time_gdp_na %>% 
+              filter(year < 2020 & year > 2010) %>% 
+              group_by(Description, state_abbr) %>% 
+              reframe(subsector_gdp_mean_state = mean(manf_ind_gdp, na.rm = TRUE))) %>% 
+  group_by(Description) %>% 
+  mutate(mean_index = mean(subsector_gdp_var_state, na.rm = TRUE), 
+         var_index_state = subsector_gdp_var_state / mean_index,
+    var_perc_state = subsector_gdp_var_state / subsector_gdp_mean_state) %>% 
+  left_join(ind_var %>% 
+              select(Description, var_index_sector, var_perc_sector)) %>% 
+  mutate(var_index_state / var_index_sector) 
+```
+
+
+```{r, eval = FALSE}
+subsector_state_benchmarks %>% 
+  ggplot() + 
+  geom_text(aes(x = log(subsector_gdp_mean_state), y = var_index_state, label = state_abbr)) + 
+  geom_hline(aes(yintercept = var_index_sector)) + 
+  facet_wrap(~Description) + 
+  theme_bw()
+```
+
+
+```{r, eval = FALSE}
+subsector_state_benchmarks %>% 
+  ggplot() + 
+  geom_text(aes(x = log(subsector_gdp_mean_state), y = var_perc_state, label = state_abbr)) + 
+  geom_hline(aes(yintercept = var_perc_sector)) + 
+  facet_wrap(~Description) + 
+  theme_bw()
+```
+
+```{r, eval = FALSE}
+ind_time_gdp %>% 
+  ungroup() %>% 
+  group_by(state_abbr, Description) %>% 
+  mutate(last_year_change = lag(ind_manf_perc)) %>% 
+  ggplot() + 
+  geom_point(aes(last_year_change, ind_manf_perc, fill = Description), color = "black", shape = 21, size = 3, alpha = 0.7) + 
+  scale_fill_manual(values = col_vector) + 
+  theme_bw()
+```
+
+Theory: 
+
+At the sub-sector level, we expect a certain level of variation in sub-sector level manufacturing GDP: E(var(GDP_i)). 
+
+At the state-level, we expect a certain level of variation in state level manufacturing GDP: E(var(GDP_s)) 
+
+Controlling for the expected state-level manufacturing GDP variation, and the expected sub-sector level manufacturing GDP variation, what is the unexplained state, sub-sector level variation that is unexplained and might be due to policy? 
+Thus, we estimate: $$\hat{gdpvar_{s,i}} = \beta_0 + \beta_1*gdpvar_i + \beta_2*gdpvar_s + \epsilon_{s,i}$$ 
+
+
+```{r}
+state_var <- ind_time_gdp_na %>% 
+  select(state_abbr, year, manf_gdp, state_gdp) %>% 
+  distinct() %>% 
+  mutate(manf_share = manf_gdp/state_gdp) %>% 
+  group_by(state_abbr) %>% 
+  reframe(manf_var_state = sd(manf_share))
+```
+
+
+```{r}
+var_test <- ind_time_gdp_na %>% 
+  group_by(state_abbr, Description) %>% 
+  reframe(state_ind_var = sd(manf_ind_gdp, na.rm = TRUE)) %>% 
+  left_join(state_var) %>% 
+  left_join(ind_var)
+```
+
+
+```{r}
+var_model_1 <- lm(state_ind_var ~ subsector_gdp_var, data = var_test)
+```
+
+```{r}
+var_model_2 <- lm(state_ind_var ~ subsector_gdp_var + manf_var_state, data = var_test)
+```
+
+```{r}
+var_model_3 <- lm(state_ind_var ~ 0 + Description, data = var_test)
+```
+
+```{r}
+library(jtools)
+library(ggridges)
+```
+
+
+```{r}
+export_summs(var_model_1, var_model_2)
+```
+
+Here, we see that the variation in subsector-GDP might explain a small percent of the variation in state-subsector-level trends. Adding state-level controls does not improve the model substantially, and is not a significant correlate with state-sub-sector level trends. 
+
+Additionally, we can confirm that certain subsectors are inherently more responsible for year-to-year variation than others by estimating a sub-sector fixed effects model. 
+
+```{r}
+export_summs(var_model_3)
+```
+
+A subset of the main sectors that we identified earlier as high-volatility sub-sectors are statistically correlated with higher year-to-year variation n state-subsector level trends: (Chemical, Computer & Electronics, Food & Beverage, Machinery, Transportation, Motor Vehicles, Petroleum)
+
+```{r}
+significant_list <- c("Chemical", "Computer and electronic", "Food and beverage", "Machinery", "Other transporation", "Petroleum", "Motor vehicles")
+```
+
+```{r}
+ind_var_sig <- ind_var %>% 
+             mutate(significant = case_when(
+               str_detect(Description, paste(significant_list, collapse = "|")) ~ 1))
+```
+
+```{r}
+ind_var_perc + 
+  geom_col(data = ind_var_sig, aes(x = var_perc_sector, y = reorder(Description, var_perc_sector), fill = significant), alpha = 0.7, color = "black") + 
+  guides(fill = "none")
+```
+
+We then add the residuals and the fitted values back into our dataframe. 
+
+```{r}
+var_test$residuals_1 <- var_model_1$residuals
+var_test$fitted_1 <- var_model_1$fitted.values
+```
+
+We see that the distribution of residuals is highly skewed. 
+
+```{r}
+hist(var_model_1$residuals, xlab = "Residual", main = "Histogram of residuals \nwhen controlling subsector-level variation")
+```
+
+
+```{r}
+var_test <-  var_test  %>% 
+  mutate(log_residuals = log(abs(residuals_1)))
+```
+
+However, when taking the log of the absolute value of the residuals, the results appear to be more normally distributed, centered around 4. 
+
+```{r}
+hist(var_test$log_residuals, xlab = "Log Absolute Value Residual", main = "Histogram of log absolute value residuals \nwhen controlling subsector-level variation")
+```
+
+
+Based on where in the distribution of log absolute value of the residual a specific state-subsector combination lies, we can further group state-subsectors into discrete categories
+
+State-Subsector Variation as Expected (< 1); State-Subsector Variation Slightly Higher than Expected (1-4); State-Subsector Variation Higher than Expected (4-6); State-Subsector Variation Much Higher than Expected (6+). 
+
+```{r}
+var_test_cats <- var_test %>% 
+  mutate(residuals_cat = case_when(
+    log_residuals <= 1 ~ "As Expected", 
+    log_residuals > 1 & log_residuals < 4 ~ "Slightly Higher than Expected", 
+    log_residuals >= 4  & log_residuals < 6 ~ "Higher than Expected", 
+    log_residuals >= 6 ~ "Much Higher than Expected"
+  ))
+```
+
+As expected from the above graph, most of our observations fall in the "Higher than Expected" category. 
+
+```{r}
+var_test_cats %>% 
+  group_by(residuals_cat) %>% 
+  count()
+```
+
+
+
+```{r}
+var_test %>% 
+  ggplot() + 
+  geom_point(aes(x = fitted_1, y = log_residuals, fill = Description), shape = 21, color = "black", size = 3) + 
+  scale_fill_manual(values = col_vector) + 
+  facet_wrap(~state_abbr) + 
+  theme_bw()
+```
+
+**Similarly, some states have more "volatility" in their manufacturing sectors than others**
+```{r}
+state_var_graph <- state_var %>% 
+  ggplot() + 
+  geom_col(aes(x = manf_var_state, y = reorder(state_abbr, manf_var_state)), alpha = 0.7, color = "black")+ 
+  scale_x_continuous(labels = scales::percent) + 
+  theme_bw() + 
+  labs(x = "Standard Deviation of State Manufacturing Share of GDP \n as % of Mean State Manufacturing Share of GDP 2010-2019", y = "")
+
+state_var_graph
+```
+
+
+```{r}
+ind_var <- subsector_gdp %>% 
+  group_by(Description) %>% 
+  reframe(subsector_gdp_var = sd(subsector_gdp, na.rm = TRUE)) %>% 
+  left_join(subsector_gdp %>% 
+              group_by(Description) %>% 
+              reframe(subsector_gdp_mean = mean(subsector_gdp, na.rm = TRUE))) %>% 
+  ungroup() %>% 
+  mutate(mean_var = mean(subsector_gdp_var, na.rm = TRUE), 
+         var_index_sector = subsector_gdp_var / mean_var, 
+         var_perc_sector = subsector_gdp_var / subsector_gdp_mean)
+```
