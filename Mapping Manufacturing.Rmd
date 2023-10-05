@@ -95,7 +95,7 @@ county_leaflet <- county_sf %>%
 
 In general, we are looking to create a series of maps. The first map shows raw levels, the second map benchmarks these levels against national or state averages, the third map shows change between two specific years (either in percent change or raw percentage points in the case of manufacturing share), and the fourth map benchmarks this change against national or state averages.
 
-As we work towards these maps, we will endeavor to explore data interactively to better contextualize our information. The high degree of heteregeneity across states, counties, and manufacturing industries suggests that at the moment, manufacturing ecosystems could be considered "high-dimensional" data structures. In our work, we seek to simplify the number of dimensions that we need to evaluate manufacturing ecosytems across, and create meanigful categorizations of state manufacturinge ecosystems.
+As we work towards these maps, we will endeavor to explore data interactively to better contextualize our information. The high degree of heteregeneity across states, counties, and manufacturing industries suggests that at the moment, manufacturing ecosystems could be considered "high-dimensional" data structures. In our work, we seek to simplify the number of dimensions that we need to evaluate manufacturing ecosytems across, and create meanigful categorizations of state manufacturing ecosystems.
 
 ```{r}
 state_manf <- states_leaflet %>% 
@@ -401,6 +401,12 @@ state_categorization_2019 <- manf_data %>%
     rel_gdp < 0 & rel_emp < 0 ~ "Below National Share, GDP & Employment"
   ))
 ```
+
+```{r}
+state_categorization_2019 %>% 
+  saveRDS(here("State Data/state_quadrants_1.RDS"))
+```
+
 
 ```{r}
 quad_cols <- brewer.pal(8, "Accent") %>% tail(4)
@@ -839,9 +845,8 @@ county_emp_graph <- county_emp_calcs %>%
   mutate(county_share = county_emp / tot_emp) %>% 
   ggplot() + 
   geom_col(aes(x = county_share, y = reorder(state_abbr, tot_emp), fill = county_share), color = "black") + 
-  scale_fill_distiller(palette = "Spectral") + 
-  guides(fill = "none")+ 
-  labs(x = "County manufacturing (31-33) employment share of state employment", y = "") + 
+  scale_fill_distiller(palette = "Spectral", labels = scales::label_percent()) + 
+  labs(x = "County manufacturing (31-33) employment share of state employment", y = "", fill = "County Share of State Employment") + 
   scale_x_continuous(labels = scales::percent) + 
   theme_bw() + 
   axis_theme
@@ -873,8 +878,9 @@ concentration_comp <- county_ind_comp %>%
   ggplot() + 
   geom_point(aes(x = ind_hhi, y = county_hhi, fill = state_quadrant), shape = 21, size = 3) + 
   geom_text_repel((aes(x = ind_hhi, y = county_hhi, label = state_abbr)), size = 3) + 
-  labs(x = "Industry HHI by State", y = "County HHI by State", title = "Apparent weak inverse correlation between county concentration and industry concentration?", fill = "2019 State Manufacturing Share Benchmark") + 
+  labs(x = "3-digit Industry Employment HHI by State", y = "2-digit County Employment HHI by State", fill = "2019 State Manufacturing Share Benchmark") + 
   scale_fill_brewer(palette = "Set1") + 
+  guides(fill = "none") + 
   theme_bw() + 
   axis_theme
 
@@ -928,6 +934,24 @@ size_manf_clean <- size_all_clean %>%
   mutate(monotonic = estabs > lag(estabs), 
          all_monotonic = sum(monotonic, na.rm = TRUE))
 ```
+
+```{r}
+size_manf <- size_all_clean %>% 
+  filter(year == 2019, industry_code == "31-33") %>% 
+  left_join(area_codes) %>% 
+  left_join(state_categorization_2019 %>% select(area_fips, year, state_gdp, state_quadrant)) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = log(estabs), y = reorder(state_abbr, state_gdp), fill = reorder(size_title, size_code)), color = "black") + 
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Log Manufacturing Establishments in State, by Size", y = "", fill = "", title = "Not all states have very large manufacturing establishments") + 
+  guides(fill = guide_legend(reverse = TRUE)) + 
+  theme_bw() + 
+  axis_theme 
+
+size_manf
+```
+
 
 
 ```{r, fig.width=11,fig.height=8}
@@ -1320,19 +1344,19 @@ Using the above mentioned trends, we can sort states into our first set of discr
 ![States can be categorized based on how their manufacturing economy changed between 2010 and 2019](Images/state_cats_1.png)
 
 
-## Industrial Composition Trends 
+# Industrial Composition Trends 
 
 Because of our above findings (or lack-thereof) about industrial concentration and growth, we now explore sub-sector industrial composition trends within the manufacturing sector. 
 
 ```{r}
 library(geofacet)
+library(ggridges)
 ```
 
-```{r}
-n <- 19
-qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
-col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
-```
+## GDP 
+
+Over time, certain sectors see more volatilty than others. 
+
 
 ```{r}
 ind_time_gdp <- state_ind %>% 
@@ -1347,54 +1371,437 @@ ind_time_gdp <- state_ind %>%
 ```
 
 ```{r}
-library(plotly)
+ind_time_gdp_na <- ind_time_gdp %>% 
+  filter(year < 2020 & year > 2010) %>% 
+  mutate(manf_ind_gdp = case_when(
+    manf_ind_gdp == 0 ~ NA_real_, 
+    manf_ind_gdp != 0 ~ manf_ind_gdp
+  ))
 ```
 
 
+```{r}
+subsector_gdp <- ind_time_gdp_na %>% 
+  group_by(Description, year) %>%
+  reframe(subsector_gdp = sum(manf_ind_gdp, na.rm = TRUE))
+```
 
-```{r,  fig.width=11,fig.height=8}
-ind_subsector_time <- ind_time_gdp %>% 
-  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
-  ggplot() + 
-  geom_col(aes(x = year, y = sub_sector_share, fill = Description), color = "black") + 
-  scale_fill_manual(values = col_vector) + 
+
+```{r}
+ind_var <- subsector_gdp %>% 
+  group_by(Description) %>% 
+  reframe(subsector_gdp_var = sd(subsector_gdp, na.rm = TRUE)) %>% 
+  left_join(subsector_gdp %>% 
+              group_by(Description) %>% 
+              reframe(subsector_gdp_mean = mean(subsector_gdp, na.rm = TRUE))) %>% 
+  ungroup() %>% 
+  mutate(mean_var = mean(subsector_gdp_var, na.rm = TRUE), 
+         var_index_sector = subsector_gdp_var / mean_var, 
+         var_perc_sector = subsector_gdp_var / subsector_gdp_mean)
+```
+
+```{r}
+gdp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], "#80B1D3", "#F0027F", "#B15928",  "#4DAF4A", "#A6761D", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], brewer.pal(9, "Greys")[7]) 
+```
+
+```{r}
+subsector_gdp_var <- subsector_gdp %>% 
+  ggplot(aes(x = subsector_gdp, y = Description, fill = Description)) + 
+  geom_density_ridges() + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  guides(fill = "none") + 
   theme_bw() + 
-  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State Manufacturing GDP") +
-  theme(axis.text.x = element_text(angle = 90)) + 
-  guides(fill = "none")
+  labs(x = "3-Digit Subsector GDP, 2010-2019", y = "3 Digit SuManufacturing Subsector") + 
+  axis_theme
 
-ind_time_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
+subsector_gdp_var
+```
 
-ind_time_geo
+
+```{r, eval = FALSE}
+n <- 19
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+```
+
+
+```{r}
+library(plotly)
+library(cowplot)
 ```
 
 ```{r}
-ind_time_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
-ind_time_states <- ind_subsector_time + facet_wrap(~state_abbr)
+my_grid <- us_state_grid1
+my_grid <- my_grid %>% filter(code != "DC")
 ```
 
 ```{r}
-ggplotly(ind_time_states)
+ind_time_gdp_cat <- ind_time_gdp %>% 
+  left_join(
+    state_categorization_2019 %>% select(state_abbr, state_quadrant, manf_gdp_share, manf_emp_share)
+  )
+```
+
+Within the 3-digit share of manufacturing GDP, we see that certain states have much larger manufacturing sectors than others, and that the scale and composition of the manufacturing sector changes heterogenously over time. Our challenge is to develop meaningful descriptions of this heterogeneity. 
+
+
+```{r, eval = FALSE}
+ [1] "#7FC97F" "#BEAED4" "#FDC086" "#FFFF99" "#386CB0" "#F0027F" "#BF5B17" "#666666" "#1B9E77" "#D95F02"
+[11] "#7570B3" "#E7298A" "#66A61E" "#E6AB02" "#A6761D" "#666666" "#A6CEE3" "#1F78B4" "#B2DF8A" "#33A02C"
+[21] "#FB9A99" "#E31A1C" "#FDBF6F" "#FF7F00" "#CAB2D6" "#6A3D9A" "#FFFF99" "#B15928" "#FBB4AE" "#B3CDE3"
+[31] "#CCEBC5" "#DECBE4" "#FED9A6" "#FFFFCC" "#E5D8BD" "#FDDAEC" "#F2F2F2" "#B3E2CD" "#FDCDAC" "#CBD5E8"
+[41] "#F4CAE4" "#E6F5C9" "#FFF2AE" "#F1E2CC" "#CCCCCC" "#E41A1C" "#377EB8" "#4DAF4A" "#984EA3" "#FF7F00"
+[51] "#FFFF33" "#A65628" "#F781BF" "#999999" "#66C2A5" "#FC8D62" "#8DA0CB" "#E78AC3" "#A6D854" "#FFD92F"
+[61] "#E5C494" "#B3B3B3" "#8DD3C7" "#FFFFB3" "#BEBADA" "#FB8072" "#80B1D3" "#FDB462" "#B3DE69" "#FCCDE5"
+[71] "#D9D9D9" "#BC80BD" "#CCEBC5" "#FFED6F"
 ```
 
 
 ```{r,  fig.width=11,fig.height=8}
-ind_subsector_time <- ind_time_gdp %>% 
+ind_subsector_time <- ind_time_gdp_cat %>% 
   mutate(sub_sector_share = 100*ind_share_state) %>% 
   ggplot() + 
   geom_col(aes(x = year, y = sub_sector_share, fill = Description)) + 
-  scale_fill_manual(values = col_vector) + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  ylim(0, 35) + 
   theme_bw() + 
   labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State GDP") +
-  theme(axis.text.x = element_text(angle = 90)) + 
-  guides(fill = "none")
+  theme(axis.text.x = element_text(angle = 90))
 
-ind_state_geo <- ind_subsector_time + facet_geo(~ state_abbr) 
+ind_state_geo <- ind_subsector_time + facet_geo(~ state_abbr, grid = my_grid) + guides(fill = "none")
 
 ind_state_geo
 ```
 
+```{r ,  fig.width=16,fig.height=8}
+legend <- get_legend(ind_subsector_time)
+ggdraw(legend)
+```
+
+In terms of share of State GDP, we see that the largest manufacturing economies appear to be located in what might be considered "middle" America.
+
+Computer and electronic product manufacturing, as well as chemical manufacturing, petroleum product manufacturing, and transportation equipment manufacturing (motor vehicles as well as other transportation equipment, distinctly) appear to make up the largest shares of national manufacturing capabilities. The largest manufacturing sectors in terms of share of state GDP appear to be in what might considered "middle-America" states, as well as on the West coast, and in the Mountain West. 
+
+We can also further investigate how the total yearly manufacturing share changes over time as well, to get a better understanding of regional specialties and trends. 
+
+```{r,  fig.width=11,fig.height=8}
+ind_subsector_time <- ind_time_gdp_cat %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = sub_sector_share, fill = Description)) + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State Manufacturing GDP") +
+  theme(axis.text.x = element_text(angle = 90))
+
+ind_share_geo <- ind_subsector_time + facet_geo(~ state_abbr, grid = my_grid)  + 
+  guides(fill = "none")
+
+ind_share_geo
+```
+
+We see what appears to be a strong computer and electronics sector in the west coast and mountain west (NM, AZ, CO, CA, OR, ID), a chemical manufacturing sector in the northeast, motor vehicle manufacturing across MI, IN, KY, TN, and AL. Food and beverage manufacturing appears more distributed across the country than other sectors. 
+
+In addition, some states (OH, AL, MS, TN, KY) appear far more evenly distributed than others (CA, LA, MT, WY). 
+
+From here, we might also be interested in patterns across states grouped by their relative share of manufacturing GDP/Employment against the national manufacturing share, since this categorization appeared to be useful previously. 
+
+```{r}
+state_q <- ind_time_gdp_cat %>% ungroup() %>%  select(state_quadrant) %>% distinct() %>% unlist()
+```
+
+
+```{r}
+subsector_time <- function(data, var, tit){
+  data %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = {{ var }}, fill = Description)) + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  facet_wrap(~reorder(state_abbr, manf_gdp_share)) +
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State GDP", title = tit) +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+}
+```
+
+
+```{r}
+q_1 <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[1]) %>% 
+  mutate(sub_sector_share = 100*ind_share_state) %>% 
+  subsector_time(sub_sector_share, state_q[1]) + 
+  labs(y = "")
+
+q_2 <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[2]) %>% 
+  mutate(sub_sector_share = 100*ind_share_state) %>% 
+  subsector_time(sub_sector_share, state_q[2]) + 
+  labs(y = "")
+
+q_3 <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[3]) %>% 
+  mutate(sub_sector_share = 100*ind_share_state) %>% 
+  subsector_time(sub_sector_share, state_q[3]) 
+
+q_4 <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[4]) %>% 
+  mutate(sub_sector_share = 100*ind_share_state) %>% 
+  subsector_time(sub_sector_share, state_q[4])
+```
+
+```{r, fig.width=11,fig.height=8}
+by_quad_gdp_1 <- (q_3+ q_1) / (q_2 + q_4)
+
+by_quad_gdp_1
+```
+
+At this point, we do not see any glaringly obvious patterns, but this ordering is still useful for us to examine. We can also focus more specifically on share. 
+
+```{r}
+subsector_time_share <- function(data, var, tit){
+  data %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = {{ var }}, fill = Description)) + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  facet_wrap(~reorder(state_abbr, manf_gdp_share)) +
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State Manufacturing GDP", title = tit) +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+}
+```
+
+```{r}
+q_1_gdp_share <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[1]) %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  subsector_time_share(sub_sector_share, state_q[1]) + 
+  labs(y = "")
+
+q_2_gdp_share <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[2]) %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  subsector_time_share(sub_sector_share, state_q[2]) + 
+  labs(y = "")
+
+q_3_gdp_share <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[3]) %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  subsector_time_share(sub_sector_share, state_q[3]) 
+
+q_4_gdp_share <- ind_time_gdp_cat %>% 
+  filter(state_quadrant == state_q[4]) %>% 
+  mutate(sub_sector_share = 100*ind_manf_perc) %>% 
+  subsector_time_share(sub_sector_share, state_q[4])
+```
+
+```{r,  fig.width=11,fig.height=8}
+by_quad_gdp_2 <- (q_3_gdp_share+ q_1_gdp_share) / (q_2_gdp_share + q_4_gdp_share)
+
+by_quad_gdp_2
+```
+
+
 We see that the industrial composition of states changes heterogeneously, and for some states - dramatically, over time. In addition, it appears that certain manufacturing sectors (such as petroleum, food and beverage, and computer and electronic products). As such, we might need to create a sub-sector level measure of "stability", and then examine state-level variance in across sub-sectors that controls for the sub-sector level measure of "stability." 
+
+However, before we do this, we want to also perform the above analysis for employment. 
+
+## Employment
+
+```{r}
+qcew_emp <- readRDS(here("State Data/qcew_tot.RDS")) 
+```
+
+```{r}
+qcew_emp_simple <- qcew_emp %>% 
+  select(area_fips, tot_emp = emp, year)
+```
+
+
+```{r}
+state_ind_emp <- readRDS(here("State Data/qcew_3digit.RDS"))
+```
+
+
+```{r}
+state_ind_emp %>% 
+  filter(area_fips != "US000") %>% 
+  group_by(industry_title) %>% 
+  reframe(ind_emp = sum(emp)) 
+```
+
+
+```{r}
+state_emp_cat <- state_ind_emp %>% 
+  filter(area_fips != "US000") %>% 
+  left_join(qcew_emp_simple) %>%
+  group_by(area_fips, year) %>% 
+  mutate(manf_emp_state = sum(emp), 
+         manf_state_share = emp/tot_emp, 
+         ind_emp_share = emp / manf_emp_state) %>% 
+  left_join(state_categorization_2019 %>% ungroup() %>% 
+              select(state_quadrant, area_fips, manf_emp = emp, state_abbr, manf_emp_share)) %>% 
+  mutate(industry_desc = substring(industry_title, 11))
+```
+
+```{r}
+state_emp_cat %>% ungroup() %>% select(industry_desc) %>% distinct() %>% arrange(industry_desc)
+```
+
+```{r}
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+
+```{r, eval = FALSE}
+n <- 21
+qual_col_pals_emp = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector_emp = unlist(mapply(brewer.pal, qual_col_pals_emp$maxcolors, rownames(qual_col_pals_emp)))
+```
+
+Note: will need to redo this with either NETS or CBP data due to employment data suppression. 
+
+
+```{r,  fig.width=11,fig.height=8}
+emp_subsector_time <- state_emp_cat %>% 
+  mutate(sub_sector_share = 100*manf_state_share) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = sub_sector_share, fill = industry_desc)) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  ylim(0, 35) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of State Avg. Annual Employment", fill = "3-Digit Manufacturing Subsector") +
+  theme(axis.text.x = element_text(angle = 90)) 
+
+emp_state_geo <- emp_subsector_time + facet_geo(~state_abbr, grid = my_grid) + 
+  guides(fill = "none")
+
+emp_state_geo
+```
+
+
+```{r ,  fig.width=11,fig.height=8}
+legend <- get_legend(emp_subsector_time)
+ggdraw(legend)
+```
+
+
+We see that state composition of manufacturing employment is very different than state composition of manufacturing GDP. 
+
+
+```{r,  fig.width=11,fig.height=8}
+emp_subsector_share <- state_emp_cat %>% 
+  mutate(sub_sector_share = 100*ind_emp_share) %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = sub_sector_share, fill = industry_desc)) +
+  scale_fill_manual(values = emp_ind_vector) + 
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of Manufacturing Avg. Annual Employment") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+
+emp_share_geo <- emp_subsector_share + facet_geo(~ state_abbr, grid = my_grid) 
+
+emp_share_geo
+```
+
+In general, manufacturing employment is far more evenly distributed tha manufacturing GDP across sub-sectors. 
+
+
+```{r}
+subsector_time_emp <- function(data, var, tit){
+  data %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = {{ var }}, fill = industry_desc)) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  facet_wrap(~reorder(state_abbr, manf_emp_share)) +
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of \nState Avg. Annual Employment", title = tit) +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+}
+```
+
+
+```{r}
+q_1_emp <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[1]) %>% 
+  mutate(sub_sector_share = 100*manf_state_share) %>% 
+  subsector_time_emp(sub_sector_share, state_q[1]) + 
+  labs(y = "")
+
+q_2_emp <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[2]) %>% 
+  mutate(sub_sector_share = 100*manf_state_share) %>% 
+  subsector_time_emp(sub_sector_share, state_q[2]) + 
+  labs(y = "")
+
+q_3_emp <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[3]) %>% 
+  mutate(sub_sector_share = 100*manf_state_share) %>% 
+  subsector_time_emp(sub_sector_share, state_q[3]) 
+
+q_4_emp <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[4]) %>% 
+  mutate(sub_sector_share = 100*manf_state_share) %>% 
+  subsector_time_emp(sub_sector_share, state_q[4])
+```
+
+```{r,  fig.width=11,fig.height=8}
+by_quad_emp <- (q_3_emp + q_1_emp) / (q_2_emp + q_4_emp)
+
+by_quad_emp
+```
+
+
+```{r}
+subsector_time_emp_share <- function(data, var, tit){
+  data %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = {{ var }}, fill = industry_desc)) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  facet_wrap(~reorder(state_abbr, manf_emp_share)) +
+  theme_bw() + 
+  labs(x = "Year", y = "Sub-Sector (3 Digit) Share of \nState Manufacturing Avg. Annual Employment", title = tit) +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  guides(fill = "none")
+}
+```
+
+
+```{r}
+q_1_emp_share <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[1]) %>% 
+  mutate(sub_sector_share = 100*ind_emp_share) %>% 
+  subsector_time_emp_share(sub_sector_share, state_q[1]) + 
+  labs(y = "")
+
+q_2_emp_share <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[2]) %>% 
+  mutate(sub_sector_share = 100*ind_emp_share) %>% 
+  subsector_time_emp_share(sub_sector_share, state_q[2]) + 
+  labs(y = "")
+
+q_3_emp_share <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[3]) %>% 
+  mutate(sub_sector_share = 100*ind_emp_share) %>% 
+  subsector_time_emp_share(sub_sector_share, state_q[3]) 
+
+q_4_emp_share <- state_emp_cat %>% 
+  filter(state_quadrant == state_q[4]) %>% 
+  mutate(sub_sector_share = 100*ind_emp_share) %>% 
+  subsector_time_emp_share(sub_sector_share, state_q[4])
+```
+
+```{r,  fig.width=11,fig.height=8}
+by_quad_emp_share <- (q_3_emp_share + q_1_emp_share) / (q_2_emp_share+ q_4_emp_share)
+
+by_quad_emp_share
+```
+
+## Controlling for Variance
 
 Indeed, we confirm that some manufacturing sub-sectors have a much greater standard deviation across years than others. For ease of comparison, we benchmark sub-sector variation against the mean of variation to create an index. Based on a preliminary analysis, we see that for some states and sub-sectors (e.g Paper manufacturing in Montana), there is a substantial drop between 2010 and 2011. To account for these outliers, we might want to drop the year 2010 from our data. 
 
@@ -1428,15 +1835,46 @@ ind_var <- subsector_gdp %>%
          var_perc_sector = subsector_gdp_var / subsector_gdp_mean)
 ```
 
+```{r}
+subsector_gdp_var <- subsector_gdp %>% 
+  ggplot(aes(x = subsector_gdp, y = reorder(Description, subsector_gdp), fill = Description)) + 
+  geom_density_ridges() + 
+  scale_fill_manual(values = gdp_ind_vector) + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  labs(x = "3-Digit Subsector GDP, 2010-2019", y = "3 Digit SuManufacturing Subsector") + 
+  axis_theme
+
+subsector_gdp_var
+```
+
+
+```{r, eval = FALSE}
+ind_var %>% 
+  ggplot() + 
+  geom_point(aes(x = subsector_gdp_mean, y = reorder(Description, subsector_gdp_mean), fill = Description), alpha = 0.7, color = "black", shape = 21, size = 4) + 
+  geom_segment(aes(x = subsector_gdp_mean - subsector_gdp_var, xend = subsector_gdp_mean + subsector_gdp_var, y = reorder(Description, subsector_gdp_mean), yend = reorder(Description, subsector_gdp_mean), color = Description), size = 3) + 
+  labs(x = "Mean Value of Manufacturing 3-Digit Subsector, and Standard Deviation across years", y = "Manufacturing Sub-Sector GDP (3-Digit)") + 
+  scale_x_continuous(labels = scales::unit_format(unit = "K", scale = 1e-3)) + 
+  scale_fill_manual(values = col_vector) + 
+  scale_color_manual(values = col_vector) + 
+  theme_bw() + 
+  guides(fill = "none", color = "none") + 
+  axis_theme
+```
+
+
 **Some sub-sectors have higher "volatility" accross years than others**
 
 ```{r}
 ind_var_index <- ind_var %>% 
   ggplot() + 
-  geom_col(aes(x = var_index_sector, y = reorder(Description, var_index_sector)), alpha = 0.7, color = "black") + 
+  geom_col(aes(x = var_index_sector, y = reorder(Description, var_index_sector), fill = Description), alpha = 0.7) + 
   labs(x = "Standard Deviation in Sub-Sector GDP as \n 
        Index of Mean SD across sub-sectors (Mean = 7751.957) \n2010-2019", y = "Manufacturing Sub-Sector GDP (3-Digit)") + 
+  scale_fill_manual(values = gdp_ind_vector) + 
   theme_bw() + 
+  guides(fill = "none") + 
   axis_theme
 
 ind_var_index

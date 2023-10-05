@@ -1,0 +1,486 @@
+---
+title: "NIST MEP Data"
+author: "Nikhil Kalathil"
+date: "2023-09-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+
+```{r, include = FALSE}
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+library(janitor)
+library(geofacet)
+library(patchwork)
+
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+```{r, include = FALSE}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
+```{r}
+
+box_dir <- "/Users/Nosheal/Library/CloudStorage/Box-Box/NIST Data"
+
+```
+
+```{r}
+box_here <- function(file) {
+  paste(box_dir, file, sep = "")
+}
+```
+
+```{r}
+nist_raw <- read_xlsx(box_here("/Clients and Projects CY2016 to CY2020_20Sept2021_CONFIDENTIAL.xlsx")) %>% 
+  clean_names()
+```
+
+
+```{r}
+nist_raw <- nist_raw  %>% 
+  clean_names()
+```
+
+```{r, include = FALSE}
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+```{r, include = FALSE}
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+```
+
+```{r, include = FALSE}
+area_codes <- left_join(area_codes, states) %>% 
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    TRUE ~ state_abbr))
+```
+
+This document reads in confidential NIST MEP data about client interactions, and cleans and summarizes these data in preparation for display and analysis (inclusion in clustering algorithm). 
+
+There is a rich amount of data contained here, and each observation in this data set is a specific center-client project for a specific year. Client data are provided by D&B Hoovers, and each client is linked to a DUNS number. 
+
+For clients, we have information about the number of employees in the establishment, the year that it was founded, a variety of descriptions about the industry that this firm belongs to. We can potentially explore linking these entries to their counterparts in the NETS system to get information about sales and corporate connections. In addition, we might want to compare how many companies are identified here, compared to the universe of companies in each of the respective 6 digit NAICS codes that exist in the NETS system (at the county level)
+
+This document will proceed as follows: 
+
+1) State level summaries (by year)
+2) State-Industry Level Summaries (by year)
+3) County Level Summaries (by-year)
+
+For each of these units of analyses, we identify a few measures: 
+
+- Number of Unique Clients
+- Number of Total Projects
+- Total Dollars Spent 
+- Types of Projects
+- Dollars per type of project
+
+# Initial Cleaning
+
+Before we can dive into the data, we need to do some initial cleaning of the date information that we have. These data are organized by year-quarter reports. 
+
+```{r}
+q_to_date = function(quarter_date){
+ # Split the quarter date string into the year and quarter
+  year <- substr(quarter_date, 1, 4)
+  quarter <- substr(quarter_date, 6, 7)
+
+  # Calculate the first month of the quarter
+  start_month <- (as.numeric(quarter) - 1) * 3 + 1
+
+  # Create a date object for the first day of the quarter
+  quarter_start_date <- ymd(paste0(year, "-", start_month, "-01"))
+
+  return(quarter_start_date)
+}
+```
+
+```{r}
+nist_raw <- nist_raw %>% 
+  mutate(start_date = q_to_date(period_reported), 
+         end_date = q_to_date(period_completed), 
+         start_year = year(start_date))
+```
+
+We see that we have to do some cleaning of client state names. 
+
+```{r}
+nist_raw %>% 
+  group_by(client_state) %>% 
+  count() %>% 
+  arrange(n)
+```
+
+```{r}
+discard <- c("ZARAGOZA", "Zhejiang", "London")
+```
+
+```{r}
+nist_raw_1 <- nist_raw %>% 
+  mutate(client_state = case_when(
+    client_state == "IL" ~ "Illinois", 
+    client_state == "ME" ~ "Maine", 
+    client_state == "OH" ~ "Ohio",
+    client_state == "OR" ~ "Oregon",
+    TRUE ~ client_state
+  )) %>% 
+  filter(!client_state %in% discard) %>% 
+  filter(start_year < 2021) %>% 
+  rename(client_emp = client_employees_from_d_b)
+```
+
+# State Level Summaries 
+
+From here, we can produce a summary of the total number of projects that each NIST MEP Center engages in, across states. We also summarize state activity using 2019 as a benchmark year. 
+
+```{r}
+nist_summary_2019 <- nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico", start_year == 2019) %>% 
+  group_by(client_state) %>% 
+  count() %>% 
+  ggplot() +
+  geom_col(aes(x = n, y = reorder(client_state, n), fill = n)) + 
+  labs(x = "", y = "Number of Client Projects Per Year") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+nist_summary_2019
+```
+
+
+```{r}
+nist_summary <- nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico") %>% 
+  group_by(client_state, start_year) %>% 
+  count() %>% 
+  ggplot() +
+  geom_col(aes(x = start_year, y = n, fill = n)) + 
+  facet_geo(~client_state) + 
+  labs(x = "", y = "Number of Client Projects Per Year") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+nist_summary
+```
+
+From here, we might want to identify the total number of unique clients that each MEP center interacts with, each year. 
+
+```{r}
+state_clients_2019 <- nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico", start_year == 2019) %>% 
+  group_by(meis_client_id, client_name, client_state) %>% 
+  count() %>% 
+  group_by(client_state) %>% 
+  reframe(state_client_total = n(), avg_projects_per_client = mean(n)) %>% 
+  ggplot() + 
+  geom_col(aes(x = state_client_total, y = reorder(client_state, state_client_total))) + 
+  labs(x = "", y = "Number of Client Projects Per Year") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+state_clients_2019
+```
+
+
+```{r}
+state_clients <- nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico") %>% 
+  group_by(meis_client_id, client_name, client_state, start_year) %>% 
+  count() %>% 
+  group_by(client_state, start_year) %>% 
+  reframe(state_client_total = n(), avg_projects_per_client = mean(n)) %>% 
+  ggplot() +
+  geom_col(aes(x = start_year, y = state_client_total, fill = avg_projects_per_client)) + 
+  facet_geo(~client_state) + 
+  labs(x = "", y = "Number of Client Projects Per Year") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+
+state_clients
+```
+
+We see that both of these measures perform very similarly in capturing NIST MEP activity within the state. At this point, we are interested in benchmarking NIST MEP Center activity against total manufacturing activity in each state. As such, we import some of our existing data. 
+
+```{r}
+#TOTAL ESTABLISHMENT AND EMPLOYMENT DATA 
+qcew_emp <- readRDS(here("State Data/qcew_tot.RDS"))  %>% 
+  select(-c(area_title)) %>% 
+  left_join(area_codes)
+```
+
+```{r}
+#3-DIGIT MANUFACTURING ESTABLISHMENT DATA 
+state_ind_emp <- readRDS(here("State Data/qcew_3digit.RDS")) %>% 
+  select(-c(area_title)) %>% 
+  left_join(area_codes)
+```
+
+
+```{r}
+manf_controls <- qcew_emp %>% 
+  filter(!is.na(state_abbr)) %>% 
+  select(tot_estabs = estabs, tot_emp = emp, area_title, year) %>% 
+  left_join(state_ind_emp %>% filter(!is.na(state_abbr)), .) %>% 
+  group_by(state_abbr, year) %>% 
+  mutate(manf_estabs = sum(estabs), manf_emp = sum(emp)) %>% 
+  ungroup()
+```
+
+We have data about the total number of companies that each MEP center serves in a year, as well as the estimated number of employees from that establishment (provided by NIST from D&B data)
+
+We create a dataframe that will allow us to benchmark NIST MEP center activity in each state against manufacturing activity in total. 
+
+```{r}
+nist_state_manf <- nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico") %>% 
+  group_by(meis_client_id, client_name, client_state, start_year) %>% 
+  reframe(client_projects = n(), client_emp) %>% 
+  distinct() %>% 
+  group_by(client_state, start_year) %>% 
+  reframe(state_clients = n(), avg_projects_per_client = mean(client_projects), total_projects = sum(client_projects), employees_served = sum(client_emp, na.rm = TRUE)) %>% 
+  rename(area_title = client_state, year = start_year) %>% 
+  left_join(manf_controls %>% 
+              select(state_abbr, area_title, manf_estabs, tot_estabs, manf_emp, tot_emp, year) %>% 
+              distinct()) %>% 
+  mutate(nist_activity_estabs = state_clients / manf_estabs,
+         nist_activity_emp = employees_served / manf_emp)
+```
+
+
+Because NIST MEP center activity appears to be roughly consistent across years, we start by examining high-level trends in 2019. 
+
+```{r}
+turn_perc <- function(var){ 
+ 
+   paste(round( {{ var }}, 3)*100, "%")
+  
+           
+           }
+```
+
+
+```{r}
+nist_sum_estabs <- nist_state_manf %>% 
+  filter(year == 2019) %>% 
+  mutate(nist_estabs_perc = turn_perc(nist_activity_estabs)) %>% 
+  ggplot() + 
+  geom_col(aes(x = nist_activity_estabs, y = reorder(state_abbr, manf_estabs)), fill = brewer.pal(9, "Dark2")[3], color = "black") + 
+  geom_label(aes(x = nist_activity_estabs, y = reorder(state_abbr, manf_estabs), label = nist_estabs_perc  ), fill = brewer.pal(9, "Dark2")[3], color = "white", size = 4) +
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "NIST MEP Unique Clients as a Percent of State Manufacturing Establishments \n2019", y = "") + 
+  guides(fill = "none") + 
+  theme_bw() 
+
+nist_sum_estabs
+```
+
+
+```{r}
+nist_sum_emp <- nist_state_manf %>% 
+  filter(year == 2019) %>% 
+  mutate(nist_emp_perc = turn_perc(nist_activity_emp)) %>% 
+  ggplot() + 
+  geom_col(aes(x = nist_activity_emp, y = reorder(state_abbr, manf_estabs)), fill = brewer.pal(9, "Dark2")[3], color = "black") + 
+  geom_label(aes(x = nist_activity_emp, y = reorder(state_abbr, manf_estabs), label = nist_emp_perc  ), fill = brewer.pal(9, "Dark2")[3], color = "white", size = 4) +
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Sum of Employees of NIST MEP Clients as a Percent of State Manufacturing Employment \n2019", y = "") + 
+  guides(fill = "none") + 
+  theme_bw()
+
+nist_sum_emp
+```
+
+
+```{r}
+nist_activity <- nist_sum_estabs + nist_sum_emp
+
+nist_activity
+```
+
+```{r}
+state_quads <- readRDS(here("State Data/state_quadrants_1.RDS"))
+```
+
+
+```{r}
+quad_cols <- brewer.pal(8, "Accent") %>% tail(4)
+```
+
+```{r}
+nist_state_activity <- nist_state_manf %>% 
+  filter(year == 2019) %>% 
+  left_join(state_quads %>% 
+              select(state_abbr, state_quadrant)) %>% 
+  ggplot() + 
+  geom_point(aes(x = nist_activity_estabs, y = nist_activity_emp, fill = state_quadrant), shape = 21, size = 3, color = "black") + 
+  geom_text_repel(aes(x = nist_activity_estabs, y = nist_activity_emp, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  labs(x = "NIST MEP Center Unique Clients as a Percent of State Manufacturing Establishments \n2019", y = "Sum of Employees of NIST MEP Clients as a \nPercent of State Manufacturing Employment \n2019") + 
+  theme_bw() + 
+  axis_theme +
+  guides(fill = "none")
+
+nist_state_activity
+```
+
+```{r}
+manf_data <- readRDS(here("State Data/manf_clean.RDS"))
+```
+
+
+# Sub-Sector level data 
+
+```{r}
+nist_3digit <- nist_raw_1 %>% 
+    filter(client_state != "Puerto Rico") %>% 
+    mutate(naics_3 = str_sub(primary_naics_impact_driver_for_analysis, 1, 3)) %>% 
+  group_by(meis_client_id, client_name, client_state, start_year, naics_3) %>% 
+  reframe(client_projects = n(), client_emp) %>% 
+  distinct() %>% 
+  group_by(client_state, start_year, naics_3) %>% 
+  reframe(state_clients = n(), avg_projects_per_client = mean(client_projects), total_projects = sum(client_projects), employees_served = sum(client_emp, na.rm = TRUE)) 
+  
+```
+
+
+```{r}
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+
+```{r}
+nist_3digit_benchmark <- nist_3digit %>% 
+  rename(area_title = client_state, year = start_year, industry_code = naics_3) %>% 
+  left_join(state_ind_emp) %>% 
+  left_join(state_quads %>% 
+              select(state_abbr, state_quadrant, manf_estabs = estabs, manf_emp = emp)) %>% 
+  mutate(nist_activity_estabs = state_clients / manf_estabs,
+         nist_activity_emp = employees_served / manf_emp) %>% 
+  mutate(industry_desc = substring(industry_title, 11)) 
+```
+
+
+```{r}
+nist_3digit_estabs <- nist_3digit_benchmark %>% 
+  filter(year == 2019, !is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = nist_activity_estabs, y = reorder(state_abbr, manf_estabs), fill = industry_desc), color = "black" ) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  labs(x = "NIST MEP Center Unique Clients as a Percent of State Manufacturing Establishments \n2019", y = "", fill = "3-Digit NAICS") + 
+  theme_bw() + 
+  theme(legend.position = "bottom") + 
+  guides(fill = "none")
+
+nist_3digit_estabs
+```
+
+
+```{r}
+nist_3digit_emp <- nist_3digit_benchmark %>% 
+  filter(year == 2019, !is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = nist_activity_emp, y = reorder(state_abbr, manf_estabs), fill = industry_desc), color = "black" ) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  labs(x = "Sum of Employees of NIST MEP Clients as a Percent of State Manufacturing Employment \n2019", y = "", fill = "3-Digit NAICS") + 
+  theme_bw() +
+  guides(fill = "none")
+  
+nist_3digit_emp 
+```
+
+
+```{r}
+nist_3digit_sum <- nist_3digit_estabs + nist_3digit_emp
+
+nist_3digit_sum
+```
+
+
+
+```{r}
+test <- nist_3digit_benchmark %>% 
+  filter(!is.na(state_abbr)) %>% 
+  ggplot() + 
+  geom_col(aes(x = year, y = nist_activity_estabs, fill = industry_desc)) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  facet_geo(~state_abbr) + 
+  theme_bw() + guides(fill = "none")
+```
+
+
+
+
+```{r}
+nist_3digit %>% 
+  filter(year == 2019) %>% 
+  left_join(state_quads %>% 
+              select(state_abbr, state_quadrant)) %>% 
+  ggplot() + 
+  geom_point(aes(x = nist_activity_estabs, y = nist_activity_emp, fill = state_quadrant), shape = 21, size = 3, color = "black") + 
+  geom_text_repel(aes(x = nist_activity_estabs, y = nist_activity_emp, label = state_abbr)) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  scale_fill_brewer(palette = "Set1") + 
+  labs(x = "NIST MEP Center Unique Clients as a Percent of State Manufacturing Establishments \n2019", y = "Sum of Employees of NIST MEP Clients as a Percent of State Manufacturing Employment \n2019") + 
+  theme_bw() + 
+  axis_theme +
+  guides(fill = "none")
+```
+
+
+
+```{r}
+nist_raw_1 %>% 
+  filter(client_state != "Puerto Rico") %>% 
+  mutate(naics_3 = substr(primary_naics_impact_driver_for_analysis, 1, 3)) %>% 
+  group_by(meis_client_id, client_name, client_state, start_year, ) %>% 
+  reframe(client_projects = n(), client_emp) %>% 
+  group_by(client_state, start_year) %>% 
+  reframe(state_clients = n(), avg_projects_per_client = mean(client_projects), total_projects = sum(client_projects), employees_served = sum(client_emp, na.rm = TRUE)) %>% 
+  rename(area_title = client_state, year = start_year) %>% 
+  left_join(manf_controls %>% 
+              select(state_abbr, area_title, manf_estabs, tot_estabs, manf_emp, tot_emp, year) %>% 
+              distinct()) %>% 
+  mutate(nist_activity_estabs = state_clients / manf_estabs,
+         nist_activity_emp = employees_served / manf_emp)
+```
+

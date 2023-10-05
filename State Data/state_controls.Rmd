@@ -17,6 +17,7 @@ library(tidyverse)
 library(tidycensus)
 library(RColorBrewer)
 library(here)
+library(Hmisc)
 ```
 ```{r}
 
@@ -30,8 +31,148 @@ box_here <- function(file) {
 }
 ```
 
+```{r}
+agglvl_dict <- read.csv(here("State Data/agg-level-titles-csv.csv"))
+ind_code_dict <- read.csv(here("State Data/industry-titles.csv"))
+area_dict <- read.csv(here("State Data/area-titles-csv.csv")) %>% 
+  mutate(area_fips_simple = area_fips, 
+    area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+```
+
+
 
 # QCEW Data
+
+## 3-Digit Manufacturing Data for States, 2010 to 2019
+
+We start by defining a procedure to get 3-digit manufacturing employment and establishment data at the state level. 
+
+```{r}
+qcew_read <- function(year){
+  
+  url <- paste("https://data.bls.gov/cew/data/files/", 
+               year, "/csv/", 
+               year, "_annual_singlefile.zip", sep = "")
+  
+  read.csv(getZip(url))
+  
+} 
+```
+
+
+```{r}
+qcew_2019 <- read.csv(getZip("https://data.bls.gov/cew/data/files/2019/csv/2019_annual_singlefile.zip"))
+```
+
+We note that there is a non-insubstantial amount of government owned manufacturing across the US. 
+
+
+```{r}
+gov_manf_2019 <- qcew_2019 %>% 
+  filter(own_code != 5) %>% 
+  mutate(ind_code = as.numeric(industry_code)) %>% 
+  filter(ind_code >= 300 & ind_code <= 400) %>% 
+  select(area_fips, industry_code, estabs = annual_avg_estabs, emp = annual_avg_emplvl, own_code) %>%  
+  left_join(ind_code_dict) %>% 
+  left_join(area_dict)
+
+gov_manf_2019 %>% 
+  saveRDS(here("State Data/gov_manf_2019.RDS"))
+```
+
+While we may want to return to this measure in the future, for now, we want to focus on privately owned firms. We define a function to get QCEW 3-digit NAICS Manufacturing employment data for the US as a whole, and for each state. 
+
+```{r}
+qcew_manf_3digit <- function(data, y) {
+  data %>% 
+  filter(own_code == 5, agglvl_code %in% c(15, 55)) %>% 
+  select(agglvl_code, industry_code, area_fips, estabs = annual_avg_estabs, emp = annual_avg_emplvl, own_code, pay = total_annual_wages) %>% 
+  mutate(ind_code = as.numeric(industry_code)) %>% 
+  filter(ind_code >= 300 & ind_code <= 400) %>% 
+  left_join(ind_code_dict) %>% 
+  left_join(agglvl_dict) %>% 
+  mutate(year = y)
+}
+```
+
+
+```{r}
+qcew_manf_2019 <- qcew_2019  %>% 
+  qcew_manf_3digit(2019)
+```
+
+```{r}
+qcew_2010 <- qcew_read(2010)
+```
+
+```{r}
+qcew_manf_2010 <- qcew_read(2010) %>% 
+  qcew_manf_3digit(2010)
+```
+To this data, we need to add information about total employment in each state. 
+
+```{r}
+qcew_state_total <- function(data, y) {
+  data %>% 
+  filter(own_code == 5, agglvl_code %in% c(51)) %>% 
+  select(agglvl_code, industry_code, area_fips, estabs = annual_avg_estabs, emp = annual_avg_emplvl, own_code, pay = total_annual_wages) %>% 
+  left_join(ind_code_dict) %>% 
+  left_join(agglvl_dict) %>% 
+  mutate(year = y)
+}
+```
+
+```{r}
+qcew_state_2010 <- qcew_2010 %>% 
+  qcew_state_total(2010)
+```
+
+```{r}
+for (i in 2011:2022){
+  
+  qcew_raw <- qcew_read[i]
+ 
+  qcew_year <- qcew_raw %>% 
+    qcew_manf_3digit(i)
+  
+  qcew_year_tot <- qcew_raw %>% 
+    qcew_state_total(i)
+  
+  if (i == 2011){ 
+    qcew_data <- bind_rows(qcew_manf_2010, qcew_year)
+    qcew_data_emp <- bind_rows(qcew_state_2010, qcew_year_tot)}
+  else {
+  qcew_data <- bind_rows(qcew_data, qcew_year)
+  qcew_data_emp <- bind_rows(qcew_data_emp, qcew_year_tot)
+  }
+  
+}
+```
+
+```{r}
+qcew_3digit <- qcew_data %>% 
+  left_join(area_dict)
+```
+
+```{r}
+saveRDS(qcew_3digit, here("State Data/qcew_3digit.RDS"))
+```
+
+```{r}
+qcew_tot <- qcew_data_emp %>% 
+  left_join(area_dict)
+```
+
+
+```{r}
+saveRDS(qcew_tot, here("State Data/qcew_tot.RDS"))
+```
+
+
+## 
 
 We start by getting industrial employment and earnings data across the US from 2017. To do this, we need to define a function that can access the BLS QCEW API. 
 
@@ -238,7 +379,7 @@ industry_data_all <- readRDS(here("State Data/qcew_data.RDS"))
 
 
 ```{r}
-agglvl_dict <- read.csv("https://www.bls.gov/cew/classifications/aggregation/agg-level-titles-csv.csv", header = TRUE)
+agglvl_dict <- read,csv("https://www.bls.gov/cew/classifications/aggregation/agg-level-titles-csv.csv", header = TRUE)
 ```
 
 NOTE: at this point we also clean variable names and select specific variables of interest. 
@@ -645,9 +786,6 @@ area_codes <- area_codes %>%
 saveRDS(area_codes, here("State Data/area_crosswalk.RDS"))
 ```
 
-```{r}
-q
-```
 
 
 

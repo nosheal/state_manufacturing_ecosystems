@@ -1,3 +1,5 @@
-# state_manufacturing_ecosystems
-Research on categorizing state manufacturing ecosystems and how they spend CARES funding
+# Regional Manufacturing Ecosystems
 
+Research on categorizing regional manufacturing ecosystems
+
+Current breakdown of US manufacturing found here: https://nosheal.github.io/state_manufacturing_ecosystems/

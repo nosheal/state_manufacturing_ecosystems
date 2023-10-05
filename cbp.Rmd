@@ -1,0 +1,851 @@
+---
+title: "County Business Patterns"
+author: "Nikhil Kalathil"
+date: "2023-10-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+This documents works through an analysis of 5-digit manufacturing establishments at the county-level, from 2019, using county business pattern data. Setting aside the above need for theorizing, there is a need to define a solid workflow for understanding county-level 5-digit NAICS data. Given the sheer number of combinations of county-level and sub-sector level activity, there is a potentially overwhelming amount of heterogeneity in these data. While a theoretical model would help structure our approach to these data, there are a few steps that we can take to get some preliminary, county-level trends.
+
+The first question we can ask of our data is: what is the distribution of very large establishments (as measured by employment), across both industries and geographies? Here, we draw on both the anchor-tenant theory, as well as manufacturing specific work that emphasizes the role of very large establishments in coordinating regional manufacturing activity and supply chains.
+
+The procedure defined here could easily be applied to granular data about GDP (in partnership with the Census perhaps), or through annual sales data from the NETS data base. Given what we know about varieties of manufacturing, there may be substantial value in contrasting employment to sales results.
+
+The second question we can ask of our data is: how do the distribution of small and medium sized establishments by industry (and to a lesser extent, geography), compare against the large establishments in specific regions?
+
+The third question we can ask of our data is: how concentrated or distributed are states across geographies and counties? We can create a four by four matrix here. Coupled with this question, we can also ask: how do county-level trends compare against state-level trends?
+
+# Cleaning and Preproccessing 
+
+## Preliminary Libraries 
+
+Here we define a procedure to clean and pre-process the data. The data we rely on here are from the US Census County Business Patterns at the 5-digit NAICS level, focusing on the year 2019. We have the same data from 2016-2019, and have a 2-digit all industries control for 2017 and 2019.
+
+```{r}
+#Libraries
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+library(janitor)
+library(geofacet)
+library(jsonlite)
+library(ggridges)
+library(sf)
+
+set.seed(37)
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+```{r}
+#Area Crosswalks
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+
+area_codes <- left_join(area_codes, states) %>% 
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    TRUE ~ state_abbr))
+```
+
+```{r}
+#Map Data
+county_sf <- counties(cb = TRUE) %>% 
+  shift_geometry(position = "outside")
+states_sf <- states(cb = TRUE, resolution = "20m") %>%
+  shift_geometry(position = "outside")
+```
+
+```{r}
+#Change projection of data for leaflet
+
+states_leaflet <- states_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+
+counties_leaflet <- county_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84') 
+```
+
+```{r}
+#Convert county data to a table
+county_data <- counties_leaflet %>% 
+  as_tibble() %>% 
+  select(STATEFP, COUNTYFP) %>% 
+  mutate(area_fips = paste(STATEFP, COUNTYFP, sep = ""), 
+         st = as.numeric(STATEFP))
+```
+
+
+```{r}
+#Get center of each county
+county_centers <- counties_leaflet %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  st_centroid() %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+```
+
+## Baseline Maps
+
+Using existing data, we create baseline maps to build upon, as well as some helper functions to assist with mapping. 
+
+```{r}
+#Read Data
+
+state_quads <- readRDS(here("State Data/state_quadrants_1.RDS"))
+```
+
+```{r}
+#Clean format, merge data
+state_manf_2019 <- state_quads %>% 
+  mutate(NAME = area_title) %>% 
+  left_join(states_leaflet, .) %>% 
+  filter(!is.na(STATEFP)) %>% 
+  mutate(emp_k = emp / 1000,
+    emp_thousands = prettyNum(emp, big.mark = ',',scientific=FALSE), 
+    manf_emp_share_perc = manf_emp_share*100,
+    manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
+```
+
+```{r}
+#DEFINE COLOR FUNCTION for MAPS
+col_def <- function(data, var, col_scale){ 
+  
+  col_pal <- colorNumeric(palette = col_scale, domain = data$var, reverse = TRUE)
+  
+  }
+```
+
+```{r}
+#Define dynamic column selector function 
+
+var_def <- function(data, var) {
+  
+  var_list <- data %>% 
+    tibble() %>% 
+    select({{ var }}) %>% 
+    unlist() %>% 
+    unname()
+  
+  
+  
+  return(var_list)
+}
+```
+
+```{r}
+#Define dynamic label Creator for maps
+
+label_1 <- function(data, var, text, sector){
+  
+  name_vec <- var_def(data, NAME) 
+  
+  year_vec <- var_def(data, year)
+  
+  val_vec <- var_def(data, {{ var }})
+  
+  if(typeof(year_vec) == "character"){
+    
+    sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %s,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+    ) %>% lapply(htmltools::HTML) }
+  
+  else{
+  
+  sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %g,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+) %>% lapply(htmltools::HTML) } 
+  
+}
+```
+
+```{r}
+#function to build map (no popups)
+
+build_map_no_popups <- function(data, var1, label_var, colors, text, sector, legend_title) { 
+  
+  col_list <- var_def(data, {{ var1 }})
+  
+  col_fun <- col_def(data, var1, colors)
+  
+  
+  
+  m <- data %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~col_fun(col_list),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7) %>% 
+    addLegend(pal = col_fun, values = col_list, opacity = 0.7, title = legend_title,
+  position = "bottomleft")
+  
+  return(m) 
+  
+} 
+```
+
+```{r}
+#Function to build maps, popups
+build_map <- function(data, var1, label_var, colors, text, sector, legend_title) { 
+  
+  col_list <- var_def(data, {{ var1 }})
+  
+  col_fun <- col_def(data, var1, colors)
+  
+  popup_lablels <- label_1(data, {{ label_var }}, text, sector)
+  
+  m <- data %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~col_fun(col_list),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7, 
+  highlightOptions = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = popup_lablels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>% 
+    addLegend(pal = col_fun, values = col_list, opacity = 0.7, title = legend_title,
+  position = "bottomleft")
+  
+  return(m)
+}
+```
+
+
+We start with a base map of the manufacturing share of state employment in 2019.
+
+```{r}
+emp_manf_share <- build_map(state_manf_2019, manf_emp_share_perc, manf_emp_share_clean, "Greens", " &#37 of State Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37 of State Employment")
+
+emp_manf_share
+```
+
+```{r}
+rm(emp_manf_share)
+```
+
+```{r}
+#Create no popup basemap to use for later 
+manf_share_clean <-build_map_no_popups(state_manf_2019, manf_emp_share_perc, manf_emp_share_clean, "Greens", " &#37 of State Employment", " (NAICS 31-33)", "2019 NAICS 31-33 <br/>  &#37 of State Employment")
+```
+
+## Manufacturing Sectors
+
+In addition to the above basic maps, we will define some color schemes for manufacturing at the 3-digit level. While the analysis for this section and document involves 5-digit NAICS codes, the 3-digit level offers enough variation in color to capture major industry trends.
+
+As such, we need to define a way to reduce the NAICS digit codes of our 5-digit data (a trivial task), and crosswalk these with the 3-digit titles and colors.
+
+```{r}
+#Load Existing Data
+qcew_3digits <- readRDS(here("State Data/qcew_3digit.RDS")) %>% 
+  mutate(industry_desc = substring(industry_title, 11))
+```
+
+```{r}
+#Simplify to get industry codes
+ind_3digit <- qcew_3digits %>% 
+  select(naics_3digit = ind_code, naics_3digit_label = industry_desc) %>% 
+  distinct() %>% 
+  arrange(naics_3digit_label)
+```
+
+```{r}
+#Define colors 
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+
+```{r}
+#create data frame mapping colors to industries
+col_map <- data.frame(ind_3digit$naics_3digit_label, emp_ind_vector)
+```
+
+## Load 2019 CBP Data and create helper functions
+
+```{r}
+#read data
+cbp_2019 <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5)) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  mutate(emp_num = as.numeric(EMP))
+```
+
+```{r}
+#clean data slightly
+cbp_2019 <- cbp_2019 %>% 
+  mutate(naics_3digit = as.numeric(substr(NAICS2017, 1, 3))) %>% 
+  left_join(ind_3digit, .) %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE))
+```
+
+With these data, our preliminary, and primary, analysis will be focused around county-level employment by subsector. Because details about establishment employment are suppressed when there are only a few establishments, we first need to create a measure for estimating the number of employees at an establishment based on the type of establishment that it is. Following Delgado et al., 2014, we use the mid-point for an establishment employee range as our estimate of the number of employees at that establishment.
+
+```{r}
+emp_estimate <- function(data){
+  data %>% 
+    mutate(emp_est = case_when(
+    EMPSZES == 210 ~ 3, 
+    EMPSZES == 220 ~ 7, 
+    EMPSZES == 230 ~ 15, 
+    EMPSZES == 241 ~ 35, 
+    EMPSZES == 242 ~ 75, 
+    EMPSZES == 251 ~ 175, 
+    EMPSZES == 252 ~ 375, 
+    EMPSZES == 254 ~ 750, 
+    EMPSZES == 260 ~ 1000
+  ))
+  
+} 
+```
+
+```{r}
+cbp_2019 <- cbp_2019 %>% 
+  emp_estimate() 
+```
+
+```{r}
+cbp_2019 %>% 
+  group_by(EMPSZES, EMPSZES_LABEL, emp_est) %>% 
+  count()
+```
+
+We immediately see that the distribution establishment size is heterogeneous across different sub-sectors and geographies of manufacturing activity: more industries, and more counties, see a higher density of small and medium sized manufacturing activity, while fewer sub-sectors and fewer counties are responsible for the majority of large establishment manufacturing activity. 
+
+## Analysis Helper Functions
+
+Before we summarize these data, we define some helper functions to make repeating this process easier.
+
+```{r}
+#Get number of establishments by 5-Digit NAICS
+estab_size_count <- function(data, condition) { 
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    group_by(NAICS2017_LABEL, naics_3digit_label) %>% 
+    reframe(estabs = sum(ESTAB)) 
+}
+```
+
+```{r}
+# Map 5-digit NAICS to 3-digit Colors
+get_col_vec <- function(data, condition){ 
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(naics_3digit_label) %>% 
+    distinct() %>% 
+    unlist()
+  }
+```
+
+```{r}
+#Function to get appropriate 3-digit colors
+get_col_match <- function(data, condition){ 
+  
+ col_vec <- get_col_vec(data, condition)
+ 
+ col_out <- col_map %>% 
+   filter(ind_3digit.naics_3digit_label %in% col_vec) %>% 
+   select(emp_ind_vector) %>% 
+   unlist() %>% 
+   unname()
+ 
+  return(col_out)
+  
+}
+```
+
+```{r}
+#Create Labels (If needed)
+create_graph_labels <- function(data){
+  
+  data %>% 
+    group_by(naics_3digit_label) %>% 
+    mutate(naics_label = case_when(
+      estabs == max(estabs) ~ naics_3digit_label
+    )) %>% 
+    ungroup()
+  
+}
+```
+
+```{r}
+#Create functions to county the number of counties and sub-sectors
+county_n <- function(data, condition){
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(NAME) %>% 
+    distinct() %>% 
+    unlist() %>% 
+    unname()
+}
+
+sector_n <- function(data, condition){
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(NAICS2017_LABEL) %>% 
+    distinct() %>% 
+    unlist() %>% 
+    unname()
+}
+
+title_fun <- function(data, condition){
+  
+  count_n <- length(county_n(data, condition))
+  sector_n <- length(sector_n(data, condition))
+  
+  title_out <- paste(sector_n, "Sub-Sectors, Across", count_n, "Counties", sep = " ")
+  
+  return(title_out)
+}
+```
+
+## Mapping Helper Functions
+
+We also define a few helper functions to join our data to county-centers, and create our map. 
+
+```{r}
+#Join with county centers
+county_join <- function(data) {
+  data %>% 
+    inner_join(county_centers %>% rename(GEO_ID = AFFGEOID, state_fips = STATEFP, county_fips = COUNTYFP, county_name = NAME), .) 
+}
+```
+
+```{r}
+#Define dynamic label Creator
+
+label_2 <- function(data, var, condition){
+  
+  sector_vec <- var_def(data, NAICS2017_LABEL) 
+  
+  county_vec <- var_def(data, NAME)
+  
+  val_vec <- var_def(data, {{ var }})
+  
+  estabs_vec <- data %>% 
+    group_by(NAICS2017_LABEL, NAME) %>% 
+    mutate(tot_estabs = sum(ESTAB)) %>% 
+    var_def(tot_estabs)
+  
+  sprintf("<strong>%s</strong><br/>%s <br/>%s <br/> Total Establishments: %s",
+          sector_vec, county_vec, val_vec, estabs_vec) %>% 
+    lapply(htmltools::HTML) 
+  
+}
+```
+
+We can combine these functions to produce a map given a condition.
+
+```{r}
+#Final Mapping function
+estab_size_circles <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) #0.01106
+  
+  col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(col_list, map_data$naics_3digit_label)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircles(data = map_data,
+                   radius = rad, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(naics_3digit_label), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                    label = popup_label,
+                    labelOptions = labelOptions(
+                      style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "15px",
+                      direction = "auto")
+                   )
+}
+```
+
+
+# The distribution of establishments of different sizes across geographies and industries
+
+As we seek to understand the distribution of establishments of different sizes across geographies and industries, will begin with the largest establishments, and steadily work our way down. To accomplish this, we will both want to sequentially plot large establishments in counties and sub-sectors that they are located within, while also creating summary graphs of the distribution of establishments across sectors. Map locations will be displayed at the 5-digit NAICS level, and summary distributions will be primarily at the 3-digit levels, though 5-digit results will be tested and examined as well. As we proceed through this work, we will try and define functions to help simply and accelerate the process.
+
+## Very Large Establishments
+
+There are extremely few establishments with over 1,000 employees. Very large establishments are concentrated across very few subsectors. The most establishments are found in: Aerospace product and parts manufacturing; navigational measuring, electromedical and control instruments manufacturing; animal slaughtering and processing, and medical equipment and supplies manufacturing.
+
+```{r, fig.width=11,fig.height=8}
+v_large_col <- get_col_match(cbp_2019, 260)
+
+
+v_large_graph <- cbp_2019 %>% 
+  estab_size_count(260) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = v_large_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Very Large Establishments (1,000+ Employees)", subtitle = title_fun(cbp_2019, 260)) + 
+  axis_theme + 
+  theme(legend.position = "bottom")
+
+v_large_graph
+```
+
+
+Geographically, we see that very large establishments are concentrated in California, and especially in Los Angeles, and Salt-Lake City.
+
+```{r, fig.width=11,fig.height=8}
+v_large_map <- estab_size_circles(manf_share_clean, cbp_2019, 260, EMPSZES_LABEL, rad = 150000, fill_opac = .8)
+
+v_large_map
+```
+
+## Large Establishments
+
+We now turn to establishments with between 500 to 999 employees. Here, we can rely on our previously defined helper functions, to speed up our analysis.
+
+We see that the distribution of large establishments across 5-digit sub sectors differs from the distribution of very-large establishments. There are more large establishments in animal slaughtering and processing; pharmaceutical and medicine manufacturing, and motor vehicle body and trailer manufacturing. However, the number of counties that large establishments are distributed across is only slightly higher than the number of very large establishments.
+
+```{r, fig.width=11,fig.height=8}
+large_col <- get_col_match(cbp_2019, 254)
+
+large_graph <- cbp_2019 %>% 
+  estab_size_count(254) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = large_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Large Establishments (500-999 Employees)", subtitle = title_fun(cbp_2019, 254)) + 
+  axis_theme + 
+  theme(legend.position = "bottom")
+
+large_graph 
+```
+
+While the geographical distribution of large establishments follows some similar patterns to the geographic distribution of very large establishments, there are a few notable differences. Some new counties (and states), support large establishments (e.g North Carolina, Georgia, Alabama). Most of the locations that supported very large establishments also see the presence of large establishments, with a few exceptions (e.g Delaware, and Washington).
+
+```{r, fig.width=11,fig.height=8}
+large_map <- estab_size_circles(manf_share_clean, cbp_2019, 254, EMPSZES_LABEL, rad = 75000, fill_opac = .9)
+
+large_map
+```
+
+Overlapping the approximate location of large establishments on top of very large establishments illustrates how large establishments located near very large establishments tend to be in related sub-sectors, again, with a few exceptions, such as the appearance of a pharmaceutical and medicine manufacturing across California, as well as the appearance of a few machinery-related sub-sectors in the los angeles, lake county (IN), and Ottawa county (MI).
+
+```{r, fig.width=11,fig.height=8}
+large_map_overlap <- estab_size_circles(v_large_map, cbp_2019, 254, EMPSZES_LABEL, rad = 75000, fill_opac = .9)
+
+large_map_overlap
+```
+
+## Medium Large Establishments
+
+We now turn to establishments with between 250 and 499 employees. We may later combine these establishments with establishments with between 100 to 249 employees.
+
+When considering these establishments, we see an exponential increase in both the number of counties as well as the number of sub-sectors that these establishments are distributed over. While the largest sub-sectors (in terms of number of establishments) follow similar patterns to the sub-sectors in very large and large establishments, there are a number of new sub-sectors with very few establishments that appear.
+
+```{r, fig.width=11,fig.height=8}
+med_large_col <- get_col_match(cbp_2019, 252)
+
+med_large_graph <- cbp_2019 %>% 
+  estab_size_count(252) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = med_large_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Medium Large Establishments (250-499)", subtitle = title_fun(cbp_2019, 252)) + 
+  theme(legend.position = "bottom")
+
+med_large_graph + guides(fill = "none")
+```
+
+Geographically, we again see the introduction of new counties and states that support medium-large establishments (such as Oregon), as well as the introduction of new geographic centers within the same states (such as Eastern Washington), but the distribution of medium-large establishments follows quite closely with similar areas as seen with the distribution of large and very large establishments.
+
+```{r, fig.width=11,fig.height=8}
+med_large_map <- estab_size_circles(manf_share_clean, cbp_2019, 252, EMPSZES_LABEL, 37500, .9, color_opac = 0.5, border_size = 1)
+
+med_large_map
+```
+
+```{r}
+rm(med_large_map)
+```
+
+Overlapping the location of these establishments with larger establishments illustrates how new geographical areas support medium-large manufacturers, as well as how the sub-sector of medium-large establishments differs (or is similar too) the sub-sector of larger establishments. For example, in Minnesota, while very-large and large establishments are in the navigational, measuring, electromedical and control instruments manufacturing, medium-large establishments in that region are in printing, pump and compressor manufacturing, and other plastics product manufacturing.
+
+```{r, fig.width=11,fig.height=8}
+med_large_map_overlap_full <- estab_size_circles(large_map_overlap, cbp_2019, 252, EMPSZES_LABEL, 37500, .9, color_opac = 0.5, border_size = 1)
+
+med_large_map_overlap_full
+```
+
+## Medium Establishments 
+
+Continuing down the list of establishment sizes, we turn to establishments with between 100 and 250 employees. We again see an exponential increase in the number of sub-sectors and geographies that medium-sized establishments are distributed over, and an even steeper skew in the density of establishments across sub-sectors, with plastic product manufacturing; printing; and paperboard container manufacturing dominating the top of the chart (a notable divergence from patterns in medium-large, large, and very large establishments).
+
+```{r, fig.width=11,fig.height=8}
+med_col <- get_col_match(cbp_2019, 251)
+
+med_graph <- cbp_2019 %>% 
+  estab_size_count(251) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = med_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Medium Establishments (100-250 employees)", subtitle = title_fun(cbp_2019, 251)) + 
+  theme(legend.position = "bottom")
+
+med_graph + guides(fill = "none")
+```
+
+Geographically, we again see the introduction of new counties/states that support medium sized manufacturing establishments (e.g. Colorado and New Mexico). However, the concentration of medium-sized companies around certain clusters of larger establishment activity stands out, especially in the midwest, southeast (bible belt), northwest, California, and northeast. Certain geographies, such as Pennsylvania, seem to support far more medium sized establishments larger establishments.
+
+```{r, fig.width=11,fig.height=8}
+med_map <- estab_size_circles(manf_share_clean, cbp_2019, 251, EMPSZES_LABEL, 17500, .9, color_opac = 0.5, border_size = 1)
+
+med_map
+```
+
+Overlapping the approximate locations of medium sized establishments onto our previous maps further illustrates how certain regions support medium-sized activity without the presence of larger establishments, (e.g. Colorado, Nevada, Pennsylvania, Texas, Florida, and to a certain extent Oregon), while other regions see establishments of multiple sizes.
+
+Crucially, this layer of our analysis suggests that there may be something fundamentally different about the structure of manufacturing activity in these regions, than manufacturing activity in regions that support establishments of multiple sizes.
+
+```{r, fig.width=11,fig.height=8}
+med_map_overlap_full <- estab_size_circles(med_large_map_overlap_full, cbp_2019, 251, EMPSZES_LABEL, 17500, .9, color_opac = 0.5, border_size = 1)
+
+med_map_overlap_full
+```
+
+## Medium Small Establishments
+
+We continue down the list, now turning to establishments with 50-99 employees, and are increasingly conscious that we may need to collapse establishment size categories at this level to facilitate analysis. However, at a first pass, it is useful to continue our granular, step-by-step process.
+
+Here, we see that the exponential increase in the distribution of establishments across sub-sectors and geographies is still greater than the previous category of establishment size, but has started to plateau slightly. Interestingly, while we see that printing and plastic manufacturing dominants the top of this graph, there are a substantial number of medium-small fabricated metal and machinery manufacturers.
+
+```{r, fig.width=11,fig.height=8}
+med_small_col <- get_col_match(cbp_2019, 242)
+
+med_small_graph <- cbp_2019 %>% 
+  estab_size_count(242) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = med_small_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Medium-Small Establishments (50-99 employees)", subtitle = title_fun(cbp_2019, 242)) + 
+  theme(legend.position = "bottom")
+
+med_small_graph + guides(fill = "none")
+```
+
+```{r, fig.width=11,fig.height=8}
+med_small_map <- estab_size_circles(manf_share_clean, cbp_2019, 242, EMPSZES_LABEL, 8750, .9, color_opac = 0.5, border_size = 0.1)
+
+med_small_map
+```
+
+```{r}
+rm(med_small_map)
+```
+
+The geographical distribution of medium-small establishments continues to follow certain very interesting patterns. In certain geographies, there appears to be substantial co-location of medium-small establishments with larger establishments. However, certain geographies (such as Montana and North Dakota) support medium-sized establishments without any larger establishments, and medium-small establishments however, medium-small establishments appear to also co-locate near medium sized establishments and not just larger establishments.
+
+```{r, fig.width=11,fig.height=8}
+med_small_overlap_full <- estab_size_circles(med_map_overlap_full, cbp_2019, 242, EMPSZES_LABEL, 8750, .9, color_opac = 0.5, border_size = 0.1)
+
+med_small_overlap_full
+```
+
+## Small-Medium Establishments
+
+The moniker small-medium establishments may need to be adjusted, but currently refers to establishments with between 20 and 49 employees. These establishments are classified as small-medium to denote that we hypothesize that they belong to a different class of establishments. While we do not see an exponential increase in the distribution of these establishments across sectors, we certainly see an exponential increase in the distribution of these establishments across counties. In addition, there does appear to be a structural shift in the types of industries that dominate establishment counts (e.g. ornamental architecture).
+
+At this point, we are crucially not controlling for GDP or output. As such, recreating this analysis with size as measured by annual sales will be a critical robustness check to perform.
+
+```{r, fig.width=11,fig.height=8}
+small_med_col <- get_col_match(cbp_2019, 241)
+
+small_med_graph <- cbp_2019 %>% 
+  estab_size_count(241) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = small_med_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Small-Medium Establishments (20-49 employees)", subtitle = title_fun(cbp_2019, 241)) + 
+  theme(legend.position = "bottom")
+
+small_med_graph + guides(fill = "none")
+```
+
+```{r, fig.width=11,fig.height=8}
+small_med_map <- estab_size_circles(manf_share_clean, cbp_2019, 241, EMPSZES_LABEL, 4375, .9, color_opac = 0.5, border_size = 0.1)
+
+small_med_map
+```
+
+```{r}
+rm(small_med_map)
+```
+
+Small-Medium sized establishments continue to populate familiar corridors, but in some areas, appear to be distributed across substantially different sectors than the sectors that larger establishments were distributed over (e.g. Los Angeles millwork and wood-product manufacturing). In other regions, such as the midwest, small-medium sized establishments are distributed across very similar sectors as larger establishments are. In particular, manufacturing activity in Florida seems to be consist of a large number of smaller manufacturing establishments, and few large incumbents.
+
+```{r, fig.width=11,fig.height=8}
+small_med_map_overlap <- estab_size_circles(med_small_overlap_full, cbp_2019, 241, EMPSZES_LABEL, 4375, .9, color_opac = 0.5, border_size = 0.1)
+
+small_med_map_overlap
+```
+
+These differences suggest that certain manufacturing ecosystems might be supported by strong, deep supplier networks at the small-medium level (20-49 employees), while other manufacturing ecosystems see experimentation, specialization, and artisan manufacturing begin at this level of establishment size.
+
+## Small Establishments
+
+We now turn to small establishments, with 10-19 employees. Exponential growth in the distribution of establishments across geographies and sectors has leveled off. There is some evidence that the structure of these establishments is similar to the structure of small-medium establishments: highly specialized, smaller establishments.
+
+```{r}
+small_col <- get_col_match(cbp_2019, 230)
+
+small_graph <- cbp_2019 %>% 
+  estab_size_count(230) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = small_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Small Establishments (10-19 employees)", subtitle = title_fun(cbp_2019, 230)) + 
+  theme(legend.position = "bottom")
+
+small_graph + guides(fill = "none")
+```
+
+Again, small establishments locate in familiar areas. There is a high density of small establishments in the eastern corridor, as well as in certain areas, such as Florida, and in the Bay Area of California. These patterns further support the hypothesis that certain geographies support strong, vertically organized supplier networks driven by large focal firms, and other geographies have more distributed, specialized, and bespoke manufacturing environments. Curiously, certain geographies might be defined by both categories (e.g. Los Angeles), and these typologies vary within states.
+
+```{r, fig.width=11,fig.height=8}
+small_map <- estab_size_circles(manf_share_clean, cbp_2019, 230, EMPSZES_LABEL, 2000, .9, color_opac = 0.5, border_size = 0.1)
+
+small_map
+```
+
+```{r}
+rm(small_map)
+```
+
+```{r, fig.width=11,fig.height=8}
+small_map_overlap <- estab_size_circles(small_med_map_overlap, cbp_2019, 230, EMPSZES_LABEL, 2000, .7, color_opac = 0.5, border_size = 0.1)
+
+small_map_overlap
+```
+
+## Very Small Establishments 
+
+The penultimate category is manufacturing establishments with between 5 to 10 employees. There appears to be another step increase in the geographic distribution of very small manufacturing establishments. In addition, there appears to be yet another structural shift in the type of sectors that these establishments are distributed over, with many machine shops.
+
+```{r, fig.width=11,fig.height=8}
+v_small_col <- get_col_match(cbp_2019, 220)
+
+v_small_graph <- cbp_2019 %>% 
+  estab_size_count(220) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = v_small_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Very Small Establishments (5-9 employees)", subtitle = title_fun(cbp_2019, 220)) + 
+  theme(legend.position = "bottom")
+
+v_small_graph + guides(fill = "none")
+```
+
+The geographic distribution of very small establishments follows that of small establishments. The sectoral overlap is unclear
+
+```{r, fig.width=11,fig.height=8}
+v_small_map <- estab_size_circles(manf_share_clean, cbp_2019, 220, EMPSZES_LABEL, 1000, .7, color_opac = 0.5, border_size = 0.1)
+
+v_small_map
+```
+
+```{r, fig.width=11,fig.height=8}
+v_small_map_overlap <- estab_size_circles(small_map_overlap, cbp_2019, 220, EMPSZES_LABEL, 1000, .7, color_opac = 0.5, border_size = 0.1)
+
+v_small_map_overlap
+```
+
+# Tiny Establishments
+
+We conclude with tiny establishments: establishments with 5 or fewer employees. These are either highly automated manufacturing establishments, or highly artistically manufacturing establishments. We again see a potentially exponential increase in the number of counties that tiny establishments are distributed over.
+
+```{r, fig.width=11,fig.height=8}
+tiny_col <- get_col_match(cbp_2019, 210)
+
+tiny_graph <- cbp_2019 %>% 
+  estab_size_count(210) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = tiny_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50), guide = guide_axis(n.dodge=2)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "5 Digit NAICS Label", fill = "3-Digit NAICS Label", title = "Tiny Establishments (Under employees)", subtitle = title_fun(cbp_2019, 210)) + 
+  theme(legend.position = "bottom")
+
+tiny_graph + guides(fill = "none")
+```
+
+These establishments are distributed truly all over the country. Curiously, some of the counties with very large manufacturers do not have these types of establishments.
+
+```{r, fig.width=11,fig.height=8}
+tiny_map <- estab_size_circles(manf_share_clean, cbp_2019, 210, EMPSZES_LABEL, 500, .6, color_opac = 0.3, border_size = 0.1)
+tiny_map
+```
+
+```{r}
+rm(tiny_map)
+```
+
+
+```{r, fig.width=11,fig.height=8}
+tiny_map_overlap <- estab_size_circles(v_small_map_overlap, cbp_2019, 210, EMPSZES_LABEL, 500, .6, color_opac = 0.3, border_size = 0.1)
+tiny_map_overlap
+```
+
