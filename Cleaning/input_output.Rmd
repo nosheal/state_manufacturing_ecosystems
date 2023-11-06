@@ -1,0 +1,913 @@
+---
+title: "input_output"
+author: "Nikhil Kalathil"
+date: "2023-11-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+#Libraries
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+library(janitor)
+library(geofacet)
+library(jsonlite)
+library(ggridges)
+library(sf)
+library(here)
+library(patchwork)
+
+set.seed(37)
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+```{r}
+#Area Crosswalks
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+
+area_codes <- left_join(area_codes, states) %>% 
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    TRUE ~ state_abbr))
+```
+
+
+```{r}
+#Map Data
+county_sf <- counties(cb = TRUE) %>% 
+  shift_geometry(position = "outside")
+states_sf <- states(cb = TRUE, resolution = "20m") %>%
+  shift_geometry(position = "outside")
+```
+
+```{r, include = FALSE}
+#Change projection of data for leaflet
+
+states_leaflet <- states_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+
+counties_leaflet <- county_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84') 
+```
+
+```{r}
+#Convert county data to a table
+county_data <- counties_leaflet %>% 
+  as_tibble() %>% 
+  select(STATEFP, COUNTYFP) %>% 
+  mutate(area_fips = paste(STATEFP, COUNTYFP, sep = ""), 
+         st = as.numeric(STATEFP))
+```
+
+
+```{r}
+#Get center of each county
+county_centers <- counties_leaflet %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  st_centroid() %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+```
+
+```{r}
+#Load Existing Data
+qcew_3digits <- readRDS(here("State Data/qcew_3digit.RDS")) %>% 
+  mutate(industry_desc = substring(industry_title, 11))
+```
+
+```{r}
+#Simplify to get industry codes
+ind_3digit <- qcew_3digits %>% 
+  select(naics_3digit = ind_code, naics_3digit_label = industry_desc) %>% 
+  distinct() %>% 
+  arrange(naics_3digit_label)
+```
+
+```{r}
+#Define colors 
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+# Introduction
+
+This document cleans and summarizes input-output use and supply tables. 
+
+```{r}
+#read data
+cbp_2019 <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5)) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  mutate(emp_num = as.numeric(EMP))
+```
+
+# Data Ingestion
+
+## USE Table
+
+```{r}
+use_table_raw <- read.csv(here("Input Output Data/USE_TABLE_2017/2017-Table 1.csv"))
+```
+
+We create a crosswalk between industry codes and their descriptions. 
+
+```{r}
+
+use_cols <- colnames(use_table_raw)
+
+ind_codes <- use_table_raw %>% 
+  head(1) %>% 
+  pivot_longer(-c(1,2), names_to = "industry_desc", values_to = "industry_code") %>% 
+  select(industry_code, industry_desc)
+```
+
+The first step will be to convert this data into a long data format.
+
+```{r}
+use_table_long <- use_table_raw[-1,] %>% 
+  pivot_longer(-c(1,2), names_to = "industry_desc", values_to = "value", values_drop_na = TRUE) %>%
+  mutate(value_clean = str_remove_all(value, "[[:punct:]]"),
+    value_num = as.numeric(value_clean)) %>% 
+  filter(!is.na(value_num)) %>% 
+  rename(commodity_code = 1, commodity_desc = 2) %>% 
+  left_join(ind_codes)
+```
+
+The resulting dataframe details how individuals industries use specific commodities. E.G the DEMAND for specific INPUTS from industires. We add a few additional descriptive columns to be able to segment and sort our data. Values in this data are then the total amount in millions of dollars of specific inputs used by specific industries. 
+
+```{r}
+use_table_clean <- use_table_long %>% 
+  mutate(com_code_3 = as.numeric(str_sub(commodity_code, 1, 3)),
+         naics_3digit = as.numeric(str_sub(industry_code, 1, 3))) %>% 
+  left_join(ind_3digit) 
+```
+
+We note that some of the commodity codes refer to aggregate measures. The same is true for some of the industry codes. 
+
+```{r}
+agg_coms <- use_table_clean %>% select(commodity_code, commodity_desc, com_code_3) %>% distinct() %>% filter(is.na(com_code_3))
+agg_coms <- agg_coms[-c(1:2),]
+
+agg_coms %>% select(1:2)
+```
+
+These codes are useful in informing aggregate measures, such as total use of inputs, total use of imports. In addition, the USE table contains valuable information about total value added by industry. Total commodity output and total industry output are both found in the USE table. 
+
+We see that the use table provides a wide variety of measures about both commodity useage, as well as industry output. 
+
+```{r}
+agg_ind <- use_table_clean %>% select(industry_code, industry_desc, naics_3digit) %>% distinct() %>% filter(is.na(naics_3digit)) 
+agg_ind <- agg_ind[-c(10),]
+
+agg_ind %>% select(1:2)
+
+```
+
+### Create Aggregate Measures
+
+Because of the way that these databases are constructred, the agg_ind dataframe above refers to commodity level summaries, while the agg_com dataframe above refers to industry level summaries. We spend some time at the moment to create some commodity and industry level benchmarks. 
+
+```{r}
+agg_coms %>% 
+  filter(commodity_code %in% c("T005", "S00300", "VABAS", "T018", "VAPRO")) %>% 
+  select(1:2)
+```
+
+We begin with creating benchmarks for value added, total output by industry, use of imports, and use of intermediary inputs. 
+
+```{r}
+ind_agg <- use_table_clean %>% 
+  filter(commodity_code %in% c("T005", "S00300", "VABAS", "T018", "VAPRO")) %>% 
+  select(commodity_code, commodity_desc, industry_code, industry_desc, value_num) %>% 
+  pivot_wider(id_cols = c(industry_code, industry_desc), names_from = commodity_code, values_from = value_num) 
+
+colnames(ind_agg) <- c("industry_code", "industry_desc", "imports", "intermediary_inputs", "value_added", "industry_output", "prod_value_added")
+```
+
+This dataframe contains information, aggregated at the INDUSTRY level, about the total of use of inputs by industries, AS WELL as the overall OUTPUT and VALUE ADDED of each industry. 
+
+We can immediately produce some summary statistics about overall industry activity here. Again, this work focuses specifically on the manufacturing sector. 
+
+### Industry Level Manufacturing Sub-Sector Details
+
+```{r}
+manf_ind <- ind_agg %>% 
+  mutate(naics_3digit = as.numeric(str_sub(industry_code, 1, 3))) %>% 
+  left_join(ind_3digit) %>% 
+  filter(naics_3digit >= 300 & naics_3digit < 400) %>% 
+  #FIX MISSING VALUES WITH 0
+  mutate(across(.cols = c(3:7), ~ case_when(
+    is.na(.) ~ 0, 
+    TRUE ~ .)), 
+    log_ind = log(industry_output), 
+    log_value = log(value_added), 
+    log_inputs = log(intermediary_inputs), 
+    val_ratio = value_added/industry_output, 
+    input_ratio = intermediary_inputs/industry_output, 
+    log_imports = log(imports), 
+    import_ratio = imports/intermediary_inputs) 
+```
+```{r}
+ind_pal <- emp_ind_vector[-c(1, 17, 9)]
+```
+
+
+#### Manufacturing Sub-Sector Total Output
+
+```{r, fig.width=11,fig.height=8}
+ind_output <- manf_ind %>% 
+  filter(industry_output != 0) %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = industry_output, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  scale_x_continuous(labels = scales::comma) + 
+  guides(fill = "none") + 
+  labs(x = "2017 Total Industry Output (Millions of $)", y = "3 Digit NAICS Group") + 
+  theme_bw() + 
+  axis_theme
+
+ind_output
+  
+```
+
+```{r, fig.width=11,fig.height=8}
+ind_output_log <-  manf_ind %>% 
+  filter(industry_output != 0) %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = log_ind, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  scale_x_continuous(trans = scales::log_trans()) + 
+  guides(fill = "none") + 
+  labs(x = "Log of 2017 Total Industry Output (Millions of $)", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+ind_output_log
+```
+
+
+```{r, fig.width=11,fig.height=8}
+ind_output_comp <- ind_output + ind_output_log
+
+ind_output_comp
+```
+
+#### Manufacturing Sub-Sector Value Added
+
+We might also be interested in the distribution of different measures of value added across manufacturing sectors. This distribution is close to the total output distribution, but has slightly flatter peaks, and some shifted distributions. 
+
+```{r, fig.width=11,fig.height=8}
+ind_value_add <- manf_ind %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = log_value, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  scale_x_continuous(trans = scales::log_trans()) + 
+  guides(fill = "none") + 
+  labs(x = "Log of 2017 Total Industry Output (Millions of $)", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+ind_value_add
+```
+
+
+```{r}
+ind_value_add + 
+  geom_density_ridges(aes(x = log_ind, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.5) + 
+  scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12, 14, 16))
+```
+
+
+However, when we examine the ratio of value added per industry output, we see a very different distribution across manufacturing sub-sectors, with certain sub-sectors housing industries with much higher value added. 
+
+```{r, fig.width=11,fig.height=8}
+value_add_ratio <- manf_ind %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = val_ratio, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  guides(fill = "none") + 
+  labs(x = "Value Added Per Output, 2017", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+value_add_ratio
+```
+
+
+#### Manufacturing Sub-Sector Total Use of Inputs 
+
+We see that the distribution of use of inputs follows the distribution of total output very closely. 
+
+```{r, fig.width=11,fig.height=8}
+input_sum <- manf_ind %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = log_inputs, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  scale_x_continuous(trans = scales::log_trans()) + 
+  guides(fill = "none") + 
+  labs(x = "Log of 2017 Total Industry Output (Millions of $)", y = "") + 
+  theme_bw() + 
+  axis_theme + 
+  scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12, 14, 16))
+
+input_sum
+```
+
+```{r, fig.width=11,fig.height=8}
+input_sum + 
+  geom_density_ridges(aes(x = log_value, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.8) + 
+  geom_density_ridges(aes(x = log_ind, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.3, color = "white") + 
+scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12, 14, 16)) +
+  theme_dark()
+```
+
+
+However, when examining the intensity of use of intermediary inputs (e.g. the ratio of intermediary inputs to output), the distribution of each 3 Digit NAICS Manufacturing sector changes substantially. 
+
+```{r, fig.width=11,fig.height=8}
+input_ratio <- manf_ind %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = input_ratio, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  guides(fill = "none") + 
+  labs(x = "2017 Ratio of Intermeidary Inputs to Industry Output", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+input_ratio
+```
+
+```{r, fig.width=11,fig.height=8}
+input_ratio + 
+  geom_density_ridges(aes(x = val_ratio, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.7)
+```
+
+#### Manufacturing Sub-Sector Total Use of Imports 
+
+We conclude these summary statistics by examining the intensity of use of imports by manufacturing sub-sector. 
+
+```{r, fig.width=11,fig.height=8}
+import_sum <- manf_ind %>% 
+  filter(imports != 0) %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = log_imports, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  guides(fill = "none") + 
+  labs(x = "2017 Log Imports", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+import_sum
+```
+
+
+```{r, fig.width=11,fig.height=8}
+input_sum + 
+  geom_density_ridges(aes(x = log_value, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.8) + 
+  geom_density_ridges(aes(x = log_ind, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.3, color = "white") + 
+  geom_density_ridges(data = manf_ind %>% 
+  filter(imports != 0), 
+                        aes(x = log_imports, y = naics_3digit_label, fill = naics_3digit_label), color = "grey") + 
+scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12, 14, 16)) +
+  theme_dark()
+```
+
+
+```{r}
+import_rat <- manf_ind %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = import_ratio, y = naics_3digit_label, fill = naics_3digit_label)) + 
+  scale_fill_manual(values = ind_pal) + 
+  guides(fill = "none") + 
+  labs(x = "2017 Ratio of Imports to Intermediate Inputs", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+import_rat
+```
+
+
+We see that the ratio of intermediary inputs to total output and the ratio of value added to total output, appear to almost mirror each other, supporting the observation that because of how input-output accounting is done, the ratio of intermediary inputs to total output also captures value added in the final production step. 
+
+### Commodity Level Details
+
+We now create some commodity level summaries, detailing the total use of specific commodities as intermediary inputs, compared to final products. In addition, we include measures of how many of these commodities are exported, 
+
+```{r}
+com_agg <- use_table_clean %>% 
+  filter(industry_code %in% c("T001", "F04000", "T019")) %>% 
+  select(commodity_code, commodity_desc, industry_code, industry_desc, value_num) %>% 
+  pivot_wider(id_cols = c(commodity_code, commodity_desc), names_from = industry_desc, values_from = value_num) 
+
+colnames(com_agg) <- c("commodity_code", "commodity_desc", "intermediate", "exports", "total_use")
+```
+
+This dataframe has COMMODITY level summaries. We can use commodity level summaries to control for the input-intensity of a given commodity. ****INSERT HERE: Commodities that have a higher share of intermediate use to total use, are 
+
+Then, we can look at the use of specific commodities by industries to understand which industries are using relatively input-intensive *****
+
+## Use of Inputs by Manufacturing Sub-Sectors
+
+We now have aggregate commodity and industry level summaries, and can simplify our original dataframe. We will also need to perform similar aggregation measures in the supply table (the make table)
+
+At this point, we might also want to separate out our commodities into some broad categories. While this categorization might be too granular, it at least allows us some baseline to assess industry use of specific types of inputs. This categorization is based on the NAICS codes used in the SUPPLY/MAKE tables, and roughly varies at the 3-digit level. A few specific inputs, such as R&D, are called out. 
+
+```{r}
+use_table_final <- use_table_clean %>% 
+  filter(!is.na(com_code_3), !is.na(naics_3digit)) %>% 
+  mutate(input_type = case_when(
+    com_code_3 < 113 ~ "Agriculture and Farming", 
+    com_code_3 == 113 | com_code_3 == 115 ~ "Forestry and Logging", 
+    com_code_3 == 114 ~ "Fishing, Hunting, Trapping", 
+    com_code_3 == 211 ~ "Oil and Gas Extraction", 
+    com_code_3 == 212 ~ "Metal Mining", 
+    com_code_3 == 213 ~ "Support for Oil, Gas, and Mining", 
+    com_code_3 == 221 ~ "Electricity, Gas, Water, Sewage, and other systems", 
+    com_code_3 >= 300 & com_code_3 < 400 ~ "Manufactured Input", 
+    com_code_3 >= 400 & com_code_3 < 460 ~ "Other wholesalers, suppliers, retailers", 
+    com_code_3 >= 481 & com_code_3 < 490 ~ "Transportation", 
+    com_code_3 >= 491 & com_code_3 < 493 ~ "Postal Service and other messaging", 
+    com_code_3 >= 500 & com_code_3 < 600 ~ "Software, Information, Financial, Legal, and other services", 
+    com_code_3 == 611 ~ "Junior colleges, colleges, universities, professional schools, and other educational services", 
+    com_code_3 >= 621 & com_code_3 < 700 ~ "Hospitals, medical and diagnostic labs, and other health care services", 
+    com_code_3 == 811 | com_code_3 == 230 ~ "Maintenance & Repair", 
+    com_code_3 == 813 ~ "Grantmaking and Philanthropy", 
+    TRUE ~ "Other inputs (e.g. arts & recreation; accomodation, etc.)"
+  )) %>%
+  mutate(input_type = case_when(
+    commodity_code == "423100" ~ "Motor vehicle and motor vehicle parts and supplies",
+    commodity_code == "423800" ~ "Machinery, Equipment, Supplies", 
+    commodity_code == "424700" ~ "Petroleum and Petroleum Products", 
+    commodity_code == "541700" ~ "Scientific research and development services", 
+    TRUE ~ input_type
+  )) 
+```
+
+```{r}
+#Create dataframe for ordering for later
+
+com_order <- use_table_final %>% 
+  group_by(input_type) %>% 
+  reframe(com_sum = sum(value_num, na.rm = TRUE)) %>%
+  arrange(input_type) %>% 
+  mutate(alpha_order = seq(n())) %>%
+  arrange(desc(com_sum)) %>% 
+  mutate(num_order = seq(n()))
+```
+
+
+### Summary Statistics
+
+We now start by creating some high level summary statistics by industry, focusing specifically on the manufacturing sector. Previous work has categorized 6-digit NAICS sectors into traded, or local (Delgado et al., 2014); or "supply-chain" industries (Delgado and Mills, 2020), but explicitly does not consider the supply chain of specific companies (e.g. GM), or specific industries. In this work, we seek to map out specific supply chains for specific industries, and examine how supply chains organize differently across regions. In the above section, we already provided summary statistics about the total use of inputs by industries. Now, we want to specifically focus on the type of inputs that manufacturers require. 
+
+1. Manufacturing Sub-sectors by use of inputs
+
+```{r}
+manf_inputs <- use_table_final %>% 
+  filter(naics_3digit >= 300 & naics_3digit < 400) %>% 
+  select(-c(value, value_clean)) %>% 
+  left_join(manf_ind) %>% 
+  mutate(input_share = value_num / intermediary_inputs) 
+```
+
+In total, we have, 'r manf_inputs %>% select(industry_desc) %>% distinct() %>% nrow()' (232) different types of manufacturing, at the 6-digit level. To make sense of the variation in use of inputs by manufacturing sub-sector, we start with a 3-level by 3-level summary, acknowledging that there is substantial variation in use of inputs by the different manufacturing sector. 
+
+
+```{r}
+input_list <- manf_inputs %>% 
+  select(input_type) %>% 
+  distinct() %>% 
+  unlist()
+```
+
+```{r}
+input_agg_share <- manf_inputs %>% 
+  group_by(industry_code, industry_desc, naics_3digit_label, input_type) %>% 
+  reframe(input_share = sum(input_share, na.rm = TRUE), intermediary_inputs, value = sum(value_num, na.rm = TRUE)) %>% 
+  distinct() 
+```
+
+```{r}
+manf_codes <- manf_inputs %>% 
+  select(naics_3digit_label) %>% 
+  distinct() %>% 
+  unlist()
+```
+
+```{r}
+ExpandColorsLIGHT <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#FFFFFF"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+
+```{r}
+ExpandColorsDARK <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#000000"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+```{r}
+input_list %>% unname()
+```
+
+
+```{r}
+input_cols <- c("#4DAF4A", "#D8CBB7", "#C7E1C6", "#7E5F37", "#252525", "#F3C38F" ,"#80B1D3", "#597B93", "#954D24", "#969696", "#386CB0","#E78AC3", "#B1865D", "#D9D9D9", "#BDBDBD", "#cf4633", "#FB8072" ,  "#F1E2CC",  "#703933") 
+```
+
+```{r}
+input_col_map <- data.frame(input_type = input_list %>% unname(), input_cols) %>% 
+  mutate(tal = seq(n()))
+
+com_order <- left_join(input_col_map, com_order)
+
+
+```
+
+```{r}
+# Map Inputs to Colors
+get_col_vec <- function(data){ 
+  data %>% 
+    select(input_type) %>% 
+    distinct() %>% 
+    unlist()
+  }
+```
+
+```{r}
+#Function to get appropriate input colors
+get_col_match <- function(data){ 
+  
+ col_vec <- get_col_vec(data)
+ 
+ col_out <- input_col_map %>% 
+   filter(input_type %in% col_vec) %>% 
+   select(input_cols) %>% 
+   unlist() %>% 
+   unname()
+ 
+  return(col_out)
+  
+}
+```
+
+```{r}
+make_map <- function(number){ 
+  
+  df <- input_agg_share %>% 
+    filter(naics_3digit_label %in% manf_codes[number], !is.na(input_share)) %>% 
+    mutate(val_round = round(input_share, 5)) %>% 
+    filter(val_round > 0) %>% 
+    group_by(input_type) %>% 
+    mutate(count = n()) %>% 
+    filter(count >= 3) %>% 
+    ungroup() %>% 
+    left_join(com_order) 
+  
+  col_vec_1 <- df %>% 
+    get_col_match()
+  
+  # col_vec_2 <- df %>% 
+  #   filter(count <3) %>% 
+  #   get_col_match()
+  
+  df %>% 
+    ggplot(aes(x = input_share, y = reorder(input_type, -num_order), fill = reorder(input_type, tal))) + 
+      geom_density_ridges(alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) +
+      geom_text(data = df %>% select(input_type, num_order, tal) %>% distinct(), aes(x = 0.35, y = reorder(input_type, -num_order), label = input_type), color = "black", nudge_y = -.2) + 
+      scale_fill_manual(values = col_vec_1, guide = "none") +
+    # ggnewscale::new_scale_fill() + 
+      # geom_point(data = df %>% filter(count <3), aes(), shape = 21) + 
+      # scale_fill_manual(values = col_vec_2, guide = "none") + 
+      theme_bw() + 
+      labs(x = "", y = "", title = manf_codes[number], fill = "") 
+  
+  }
+```
+
+
+```{r}
+make_map_simple <- function(number){ 
+  
+  df <- input_agg_share %>% 
+    filter(naics_3digit_label %in% manf_codes[number], !is.na(input_share)) %>% 
+    # group_by(input_type) %>% 
+    # reframe(inputs_total = sum(intermediary_inputs), individual_input = sum(value)) %>% 
+    # mutate(input_share = individual_input / inputs_total) %>% 
+    left_join(com_order) 
+  
+  col_vec_1 <- df %>% 
+    get_col_match()
+  
+  # col_vec_2 <- df %>% 
+  #   filter(count <3) %>% 
+  #   get_col_match()
+  
+  df %>% 
+    ggplot(aes(x = input_share, y = reorder(input_type, -num_order), fill = reorder(input_type, tal)), group = industry_desc) + 
+    geom_col(alpha = 0.7, color = "black", position = "stack") + 
+      geom_text(data = df %>% select(input_type, num_order, tal) %>% distinct(), aes(x = 0.35, y = reorder(input_type, -num_order), label = input_type), color = "black", nudge_y = -.2) + 
+      scale_fill_manual(values = col_vec_1, guide = "none") +
+    guides(color = "none") + 
+    # ggnewscale::new_scale_fill() + 
+      # geom_point(data = df %>% filter(count <3), aes(), shape = 21) + 
+      # scale_fill_manual(values = col_vec_2, guide = "none") + 
+      theme_bw() + 
+      labs(x = "", y = "", title = manf_codes[number], fill = "") + 
+    theme(legend.position = "bottom")
+  
+  }
+```
+
+
+
+
+```{r}
+manf_codes %>% unname()
+```
+
+
+```{r}
+food_manf <- make_map(1) 
+chem_manf <- make_map(2) 
+bev_manf <- make_map(3) 
+misc_manf <- make_map(4)
+text_manf <- make_map(5) 
+text_prod_manf <- make_map(6)
+wood_manf <- make_map(7) 
+non_metal_min_manf <- make_map(8) 
+furn_manf <- make_map(9) 
+apparel_manf <- make_map_simple(10) 
+leather_manf <- make_map_simple(11) 
+paper_manf <- make_map(12) 
+printing <- make_map_simple(13) 
+plastics_manf <- make_map(14)
+metal_manf <- make_map(15)
+fab_metal_manf <- make_map(16)
+transport_equipment_manf <- make_map(17) 
+petro_manf <- make_map(18)
+ee_appliance_component_manf <- make_map(19)
+machine_manf <- make_map(20)
+comp_ee_manf <- make_map(21)
+```
+Across food, miscellaneous, and beverage manufacturing, the distribution of the use of manufactured inputs is fairly flat, but wide for food manufacturing, higher and shifted right for miscellaneous manufacturing, as well as beverage and tobacco manufacturing. Miscellaneous manufacturing and beverage and tobacco manufacturing both also have a higher ratio of software, financial, legal, and other information services. The use of agricultural/farming as well fishing/hunting inputs is also not surprising. 
+
+```{r, fig.width=18,fig.height=12}
+g1 <- food_manf + theme(axis.text.y = element_blank())
+g2 <- misc_manf + theme(axis.text.y = element_blank())
+g3 <- bev_manf + theme(axis.text.y = element_blank())
+
+gA <- g1 + g2 + g3
+
+gA
+```
+
+Across chemical, plastics & rubber, and petroleum and coal product manufacturing, both chemical as well as petroleum and coal product manufacturing use mined inputs. One of the subsectors in petroleum and coal product manufacturing uses fewer manufactured inputs. There is some use of warehousing in chemical manufacturing, and both chemical manufacturing as well as plastics and rubber product manufacturing have some sub-sectors with a high use of electricity, water, sewage, gas, and other services. 
+
+```{r, fig.width=18,fig.height=12}
+g4 <- chem_manf + theme(axis.text.y = element_blank()) 
+g5 <- plastics_manf + theme(axis.text.y = element_blank())
+g6 <- petro_manf + theme(axis.text.y = element_blank())
+
+gB <- g4 + g5 + g6
+
+gB
+```
+
+Across paper, printing, and leather manufacturing, the use of manufactured inputs, as well as electricity, gas, sewage, water and other services, is rather high, along with the use of software and other financial services. Unsurprisingly, paper manufacturing has high use of forestry and logging. Printing and leather manufacturing only have two and one sub-industry, respectively. 
+
+```{r, fig.width=18,fig.height=12}
+g7 <- paper_manf + theme(axis.text.y = element_blank()) 
+g8 <- printing + theme(axis.text.y = element_blank()) 
+g9 <- leather_manf + theme(axis.text.y = element_blank()) 
+
+gC <- g7 + g8 + g9
+
+gC
+```
+
+
+Wood product manufacturing consumes forestry and logging inputs, and not all sub-sectors have a high useage of manufactured inputs, while furniture manufacturing has a high use of manufactured inputs. There is only one sub-sector in apparel manufacturing. 
+
+```{r, fig.width=18,fig.height=12}
+g10 <- wood_manf + theme(axis.text.y = element_blank()) 
+g11 <- furn_manf + theme(axis.text.y = element_blank()) 
+g12 <- apparel_manf + theme(axis.text.y = element_blank()) 
+
+gD <- g10 + g11 + g12
+
+gD
+```
+
+Across textile mills, textile product mills, and machinery manufacturing, the use of manufactured inputs is high. 
+
+```{r, fig.width=18,fig.height=12}
+g13 <- text_manf + theme(axis.text.y = element_blank()) 
+g14 <- text_prod_manf + theme(axis.text.y = element_blank()) 
+g15 <- machine_manf + theme(axis.text.y = element_blank()) 
+
+gE <- g13 + g14 + g15
+
+gE
+```
+
+Across fab-metal manufacturing, metal manufacturing, and non-metallic minerals manufacturing, the use of metal mining is high in the later two, the use of manufactured inputs is high in fabricated metal manufacturing and more distributed in the other two, and both of the later two also have some subsectors that use eletricity, gas, water, sewage, and other services. 
+
+```{r, fig.width=18,fig.height=12}
+g16 <- fab_metal_manf + theme(axis.text.y = element_blank()) 
+g17 <- metal_manf + theme(axis.text.y = element_blank()) 
+g18 <- non_metal_min_manf + theme(axis.text.y = element_blank()) 
+
+gF <- g16 + g17 + g18
+
+gF
+```
+
+Across electricial equipment; computer and electonic, and transportation equipment manufacturing, we again see heterogeneity in the use of software type services, as well as manufactured inputs. Electrical equipment as well as computer and electronic manufacturing both use more wholesalers. 
+
+```{r, fig.width=18,fig.height=12}
+g19 <- ee_appliance_component_manf + theme(axis.text.y = element_blank()) 
+g20 <- comp_ee_manf + theme(axis.text.y = element_blank()) 
+g21 <- transport_equipment_manf + theme(axis.text.y = element_blank()) 
+
+gG <- g19 + g20 + g21 
+
+gG
+```
+
+Overall, we can make some broad observations above the distribution of the use of inputs by 6-digit manufacturing sub-sectors. There is wide variation in the use of software, information, financial, legal, and other such services across sub-sectors. Overall, as 3-digit level industries use specific inputs, the heterogeneity of use of specific types of inputs also appears to increase as well. 
+
+Other figures to create: 
+- use of imports by manufacturing industry? 
+- total use of intermediary inputs by manufacturing industry? 
+
+Measures we might want to calculate or use: 
+- % of industry total inputs a specific commodity is (this measure should preceed the following two steps)
+
+Outcome oriented: what do we want? Relative measures of intensity of use of intermediate materials by subsector??? Soemthing else?? BLEeeh..... very difficult. 
+
+
+## MAKE TABLE
+
+```{r}
+supply_table_raw <- read.csv(here("Input Output Data/SUPPLY_TABLE_2017/2017-Table 1.csv"))
+```
+
+We create a crosswalk between industry codes and their descriptions. 
+
+```{r}
+
+supply_cols <- colnames(supply_table_raw)
+
+sup_ind_codes <- supply_table_raw %>% 
+  head(1) %>% 
+  pivot_longer(-c(1,2), names_to = "industry_desc", values_to = "industry_code") %>% 
+  select(industry_code, industry_desc)
+```
+
+The first step will be to convert this data into a long data format. 
+
+```{r}
+supply_table_long <- supply_table_raw[-1,] %>% 
+  pivot_longer(-c(1,2), names_to = "industry_desc", values_to = "value", values_drop_na = TRUE) %>%
+  mutate(value_clean = str_remove_all(value, "[[:punct:]]"),
+    value_num = as.numeric(value_clean)) %>% 
+  filter(!is.na(value_num)) %>% 
+  rename(commodity_code = 1, commodity_desc = 2) %>% 
+  left_join(sup_ind_codes)
+```
+
+The resulting dataframe details how individuals industries MAKE specific commodities. E.G the SUPPLY for specific OUTPUTS from industries. Total output from industry are given by the "diagonal" entry (i.e commodity code = industry code). 
+
+Again, we add a few additional descriptive columns to be able to segment and sort our data. Values in this data are then the total amount in millions of dollars of specific outputs produced by specific industries. 
+
+
+```{r}
+supply_table_clean <- supply_table_long %>% 
+  mutate(com_code_3 = as.numeric(str_sub(commodity_code, 1, 3)),
+         naics_3digit = as.numeric(str_sub(industry_code, 1, 3))) %>% 
+  left_join(ind_3digit) 
+```
+As above, we note that some of the commodity codes refer to aggregate measures. The same is true for some of the industry codes. 
+
+```{r}
+sup_agg_coms <- supply_table_clean %>% select(commodity_code, commodity_desc, com_code_3) %>% distinct() %>% filter(is.na(com_code_3))
+sup_agg_coms <- sup_agg_coms[-c(1:2),]
+
+sup_agg_coms %>% select(1:2)
+```
+
+These codes are useful in informing aggregate measures, such as total industry supply. As before, some aggregation over industry codes is necessary as well. Here, aggregation includes the measures of imports per commodity, as well as total commodity output. 
+
+```{r}
+sup_agg_ind <- supply_table_clean %>% select(industry_code, industry_desc, naics_3digit) %>% distinct() %>% filter(is.na(naics_3digit)) 
+```
+
+### Create Aggregate Measures
+
+Because of the way that these databases are constructred, the sup_agg_ind dataframe above refers to commodity level summaries, while the sup_agg_com dataframe above refers to industry level summaries. We spend some time at the moment to create some commodity and industry level benchmarks. 
+
+```{r}
+sup_agg_coms %>% 
+  filter(commodity_code %in% c("T017")) %>% 
+  select(1:2)
+```
+
+We begin with creating benchmarks for total supply by industry. 
+
+```{r}
+sup_ind_agg <- supply_table_clean %>% 
+  filter(commodity_code %in% c("T017")) %>% 
+  select(commodity_code, commodity_desc, industry_code, industry_desc, value_num) %>% 
+  pivot_wider(id_cols = c(industry_code, industry_desc), names_from = commodity_code, values_from = value_num) 
+
+colnames(sup_ind_agg) <- c("industry_code", "industry_desc", "total_industry_supply")
+```
+
+We now create some commodity level summaries, detailing the total commodity output, as well as total commodity imports
+
+```{r}
+sup_com_agg <- supply_table_clean %>% 
+  filter(industry_code %in% c("T007", "MCIF")) %>% 
+  select(commodity_code, commodity_desc, industry_code, industry_desc, value_num) %>% 
+  pivot_wider(id_cols = c(commodity_code, commodity_desc), names_from = industry_desc, values_from = value_num) 
+
+colnames(sup_com_agg) <- c("commodity_code", "commodity_desc", "total_commodity_output", "total_commodity_imports")
+```
+
+We now have aggregate commodity and industry level summaries, and can simplify our original dataframe. We will also need to perform similar aggregation measures in the supply table (the make table?)
+
+At this point, we might also want to separate out our commodities into some broad categories. While this categorization might be too granular, it at least allows us some baseline to assess industry use of specific types of inputs. 
+
+```{r}
+use_table_final <- use_table_clean %>% 
+  filter(!is.na(com_code_3), !is.na(naics_3digit)) %>% 
+  mutate(input_type = case_when(
+    com_code_3 < 113 ~ "Agriculture and Farming", 
+    com_code_3 == 113 | com_code_3 == 115 ~ "Forestry and Logging", 
+    com_code_3 == 114 ~ "Fishing, Huntinng, Trapping", 
+    com_code_3 == 211 ~ "Oil and Gas Extraction", 
+    com_code_3 == 212 ~ "Metal Mining", 
+    com_code_3 == 213 ~ "Support for Oil, Gas, and Mining", 
+    com_code_3 == 221 ~ "Electricity, Gas, Water, Sewage, and other systems", 
+    com_code_3 == 233 ~ "Healthcare, educational, or vocational structures",
+    com_code_3 >= 300 & com_code_3 < 400 ~ "Manufactured Output", 
+    com_code_3 >= 400 & com_code_3 < 460 ~ "Other wholesalers, suppliers, retailers", 
+    com_code_3 >= 481 & com_code_3 < 490 ~ "Transportation", 
+    com_code_3 >= 491 & com_code_3 < 493 ~ "Postal Service and other messaging", 
+    com_code_3 >= 500 & com_code_3 < 600 ~ "Software, Information, Financial, Legal, and other service", 
+    com_code_3 == 611 ~ "Junior colleges, colleges, universities, professional schools, and other educational services", 
+    com_code_3 >= 621 & com_code_3 < 700 ~ "Hospitals, medical and diagnostic labs, and other health care services", 
+    com_code_3 == 811 | com_code_3 == 230 ~ "Maintenance & Repair", 
+    com_code_3 == 813 ~ "Grantmaking and Philanthropy", 
+    TRUE ~ "Other Outputs (e.g. arts & recreation; accomodation, etc.)"
+  )) %>%
+  mutate(input_type = case_when(
+    commodity_code == "423100" ~ "Motor vehicle and motor vehicle parts and supplies",
+    commodity_code == "423800" ~ "Machinery, Equipment, Supplies", 
+    commodity_code == "424700" ~ "Petroleum and Petroleum Products", 
+    commodity_code == "541700" ~ "Scientific research and development services", 
+    TRUE ~ input_type
+  )) 
+```
