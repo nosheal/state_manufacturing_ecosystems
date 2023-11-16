@@ -301,7 +301,7 @@ prime_states <- prime_recipients %>%
 ```{r}
 prime_states %>% 
   group_by(state_abbr) %>% 
-  reframe(dollars_spent = sum(Sub.award.amount)) %>% 
+  reframe(dollars_spent = sum(sub_award_amount_all)) %>% 
   left_join(crf_feds_all) %>% 
   mutate(spend_perc_state = dollars_spent / state_payment, spec_perc_all = dollars_spent / state_total_allocation) %>% 
   view()
@@ -382,8 +382,8 @@ However, we still have some entities that are unmatched.
 
 ```{r}
 state_prime_supp %>% 
-  filter(is.na(state_abbr)) %>% 
-  select(-c(state_abbr, sub_award_amount_all, state_name)) %>% 
+  filter(is.na(state_abbr_prime)) %>% 
+  select(-c(state_abbr_prime, sub_award_amount_all, state_name)) %>% 
   select(Prime.recipient, Sub.recipient) %>% 
   distinct() %>% 
   view()
