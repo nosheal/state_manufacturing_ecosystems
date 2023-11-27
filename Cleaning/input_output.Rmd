@@ -126,6 +126,13 @@ cbp_2019 <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>%
 
 # Data Ingestion
 
+```{r}
+naics_sub <- function(var, num){
+   as.numeric(str_sub({{ var }}, 1, num))
+}
+```
+
+
 ## USE Table
 
 ```{r}
@@ -279,7 +286,7 @@ ind_output_comp
 
 We might also be interested in the distribution of different measures of value added across manufacturing sectors. This distribution is close to the total output distribution, but has slightly flatter peaks, and some shifted distributions. 
 
-```{r, fig.width=11,fig.height=8}
+```{r}
 ind_value_add <- manf_ind %>% 
   ggplot() + 
   geom_density_ridges(aes(x = log_value, y = naics_3digit_label, fill = naics_3digit_label)) + 
@@ -289,12 +296,15 @@ ind_value_add <- manf_ind %>%
   labs(x = "Log of 2017 Total Industry Output (Millions of $)", y = "") + 
   theme_bw() + 
   axis_theme
+```
 
+
+```{r, fig.width=11,fig.height=8}
 ind_value_add
 ```
 
 
-```{r}
+```{r, fig.width=11,fig.height=8}
 ind_value_add + 
   geom_density_ridges(aes(x = log_ind, y = naics_3digit_label, fill = naics_3digit_label), alpha = 0.5) + 
   scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12, 14, 16))
@@ -396,7 +406,7 @@ scale_x_continuous(breaks = c(0,6, 8, 10, 12, 14, 16), labels = c(0,6, 8, 10, 12
 ```
 
 
-```{r}
+```{r, fig.width=11,fig.height=8}
 import_rat <- manf_ind %>% 
   ggplot() + 
   geom_density_ridges(aes(x = import_ratio, y = naics_3digit_label, fill = naics_3digit_label)) + 
@@ -475,6 +485,10 @@ com_order <- use_table_final %>%
   mutate(alpha_order = seq(n())) %>%
   arrange(desc(com_sum)) %>% 
   mutate(num_order = seq(n()))
+```
+
+```{r}
+saveRDS(use_table_final, here("Input Output Data/use_table_final.RDS"))
 ```
 
 
@@ -795,7 +809,8 @@ input_sum_all <- input_agg_share %>%
     theme_bw() + 
     labs(x = "", y = "", title = "", fill = "") + 
   guides(color = "none") + 
-  scale_color_manual(values = input_cols, guide = "none")
+  scale_color_manual(values = input_cols, guide = "none") + 
+  axis_theme
 
 input_sum_all
 ```
@@ -807,7 +822,7 @@ We see that some sectors use more software and related services (e.g. leather an
 
 Only a few industries (chemical, food, textile), use agricultural products, and a different set of industries (plastics, wood, paper), use lumber products. Only some industries use mined metals.  
 
-```{r, fig.width=18,fig.height=12}
+```{r, fig.width=9,fig.height=6}
 input_sum_3digit <- input_agg_share %>% 
   group_by(naics_3digit_label, input_type) %>% 
   reframe(total_input = sum(intermediary_inputs), int_input = sum(value), mean_share = mean(input_share), sd_share = sd(input_share), min_share = min(input_share), max_share = max(input_share)) %>% 
@@ -948,6 +963,11 @@ cluster_assignments <- data.frame(
 ```
 
 
+```{r}
+saveRDS(cluster_assignments, here("Input Output Data/cluster_assignments.RDS"))
+```
+
+
 ### Cluster to NAICS Comparissons
 
 Comparing how 6-digit NAICS manufacturing sectors are grouped together at the 3-digit NAICS level with a new clustering assignment that groups manufacturing sectors together based on shared inputs, we see that sub-sectors that were formerly grouped together at the 3-digit NAICS level are no longer paired together. 
@@ -983,14 +1003,16 @@ k_clust <- cluster_assignments %>%
   labs(x = "K-Means Clustering Assignment", y = "3-Digit NAICS Code") + 
   scale_x_continuous(breaks = seq(1, 21)) + 
   theme_bw() + 
-  theme(axis.text.y = element_blank())
+  theme(axis.text.y = element_blank()) + 
+  axis_theme + 
+  axis_theme
 
 k_clust
 ```
 
 We can spend some time investigating how 6-digit manufacturing sectors are assigned to new clusters. 
 
-```{r, fig.width=18,fig.height=12}
+```{r, fig.width=9,fig.height=6}
 ggplotly(h_clust)
 ```
 
@@ -1017,7 +1039,8 @@ h_15 <- cluster_assignments %>%
   guides(fill = "none") + 
   labs(x = "Hierarchical Clustering Assignment (15)", y = "3-Digit NAICS Code") + 
   theme_bw() + 
-  theme(axis.text.y = element_blank())
+  theme(axis.text.y = element_blank()) + 
+  axis_theme
   
 ```
 ```{r}
@@ -1031,7 +1054,8 @@ h_30 <- cluster_assignments %>%
   guides(fill = "none") + 
   labs(x = "Hierarchical Clustering Assignment (30)", y = "3-Digit NAICS Code") + 
   theme_bw() + 
-  theme(axis.text.y = element_blank())
+  theme(axis.text.y = element_blank()) + 
+  axis_theme
 ```
 
 ```{r, fig.width=18,fig.height=12}
@@ -1053,7 +1077,8 @@ cluster_raw <- cluster_assignments %>%
   guides(fill = "none") + 
   labs(x = "Hierarchical Clustering Assignment (Raw Values)", y = "3-Digit NAICS Code") + 
   theme_bw() + 
-  theme(axis.text.y = element_blank())
+  theme(axis.text.y = element_blank()) + 
+  axis_theme
 
 cluster_raw
 ```
@@ -1110,7 +1135,8 @@ new_clusters_input <- input_agg_share %>%
     theme_bw() + 
     labs(x = "", y = "", title = "", fill = "") + 
   guides(color = "none") + 
-  scale_color_manual(values = input_cols, guide = "none")
+  scale_color_manual(values = input_cols, guide = "none") + 
+  axis_theme
 
 new_clusters_input
 ```
@@ -1130,7 +1156,8 @@ h_cluster_all <- input_agg_share %>%
   scale_fill_manual(values = input_cols) + 
   guides(fill = "none") + 
   theme_bw() + 
-  labs(x = "Share of total industry inputs by commodity type", y = "H-Clustering by Inputs") 
+  labs(x = "Share of total industry inputs by commodity type", y = "H-Clustering by Inputs")  + 
+  axis_theme
 
 h_cluster_all
 ```
@@ -1144,6 +1171,158 @@ h_cluster_all + input_sum_3digit
 ```
 
 We will return to this clustering algorithm, ideally to adjust the pruning and clustering, later. 
+
+### Scientific R&D
+
+At this point, we might also be interested in understanding how different manufacturing sectors use scientific R&D. The R&D sector is especially interesting because only according to the input/output USE table, the value of use of R&D as an intermediate input ONLY accounts for 2% of the total value of the use of R&D by establishments. This seems extremely low and very surprising.  
+
+Before diving into the manufacturing sector specifically, we pull back out and summarize the use of R&D as an input by various 2-digit sectors. We see that the professional, scientific, and technical services sector (54) has the majority of R&D use, which is not surprising. This is followed by management of companies and enterprises (55), Utilities (22), and then Health Care and Social Assistance (62). The manufacturing sector accounts for just over 6% of R&D use, beating out information (51), as well as finance and insurance (52) 
+
+```{r, fig.width=18,fig.height=12}
+rd_all <- use_table_final %>% 
+  filter(commodity_code == "541700") %>% 
+  mutate(naics_2digit =  naics_sub(industry_code, 2),
+          naics_2digit = case_when(
+    naics_2digit >= 30 & naics_2digit < 40 ~ 31.33, 
+    TRUE ~ naics_2digit)) %>% 
+  group_by(naics_2digit) %>% 
+  reframe(ind_rd = sum(value_num)) %>% 
+  ungroup() %>% 
+  mutate(total_rd_use = sum(ind_rd), 
+         ind_rd_share = ind_rd / total_rd_use) %>% 
+  ggplot(aes(y = ind_rd_share, x = reorder(as.factor(naics_2digit), ind_rd_share))) +
+  geom_col(color = "black", fill = "light blue") + 
+  geom_text(aes(y = ind_rd_share + 0.01, label = round(100*ind_rd_share, 2))) + 
+  scale_y_continuous(labels = scales::percent) + 
+  labs(x = "NACIS 2-Digit Sector", y = "Share of Total R&D Use") + 
+  theme_bw()
+
+rd_all
+```
+
+
+```{r}
+rd_inputs <- manf_inputs %>% 
+  filter(commodity_code %in% c(541700)) %>% 
+  left_join(com_agg %>% 
+              select(commodity_code, intermediate, total_use)) %>% 
+  mutate(rd_use_perc = value_num / intermediate, #industry use of R&D as a percent of total use of R&D
+         rd_ind_perc = value_num / intermediary_inputs) #R&D Percent of Total Industry Input
+```
+
+As a note, we can also benchmark this against the total output from the R&D sector. 
+
+```{r}
+rd_out <- ind_agg %>% 
+  filter(industry_code == 541700) %>% 
+  select(rd_output = industry_output) %>% 
+  unlist() %>% 
+  unname()
+
+rd_inputs$rd_output <- rd_out
+  
+```
+
+
+
+```{r, fig.width=18,fig.height=12}
+rd_out_graph <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_use_perc)) %>% 
+  ggplot(aes(x = rd_use_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Share of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_out_graph
+```
+
+```{r, fig.width=9,fig.height=6}
+rd_out1 <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_use_perc)) %>% 
+  ggplot(aes(x = rd_use_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Share of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+ggplotly(rd_out1)
+```
+
+
+However, each manufacturing industry contributes very little to total use of R&D.
+
+Exploring both graphs carefully, we see that the industries that use more of the total supply of R&D are NOT always the same as the industries that have a higher R&D share of total intermediate inputs.  
+
+```{r, fig.width=18,fig.height=12}
+rd_out_ind <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_ind_perc)) %>% 
+  ggplot(aes(x = rd_ind_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Total Industry Input", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_out_ind
+```
+
+```{r, fig.width=9,fig.height=6}
+rd_out_ind1 <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_ind_perc)) %>% 
+  ggplot(aes(x = rd_ind_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Total Industry Input", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+ggplotly(rd_out_ind1)
+```
+
+
+
+```{r, fig.width=18,fig.height=12}
+rd_in_comp <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(outlier_label = case_when(
+    rd_ind_perc > 0.000083 ~ industry_desc,
+    rd_use_perc > 0.000029 ~ industry_desc,
+  )) %>%
+  ggplot(aes(x = rd_ind_perc, y = rd_use_perc, fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), size = 4, alpha = 0.7, color = "black", shape = 21) + 
+  #geom_label(aes(label = outlier_label), size = 4, max.overlaps = 40) + 
+  scale_fill_manual(values = emp_ind_vector) +
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Intermediate Inputs", y = "Industry Percent of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_in_comp
+```
+
+```{r, fig.width=18,fig.height=12}
+ggplotly(rd_out_comp)
+```
+
+```{r}
+saveRDS(rd_inputs, here("Input Output Data/rd_inputs.RDS"))
+```
+
 
 ## Use of Manufactured Inputs by Non-Manufacturing Industries
 
@@ -1175,7 +1354,7 @@ manf_use_final <- manf_use %>%
 
 We see that certain non-manufacturing sectors use more than 10% of their total inputs as manufactured inputs. As such, we might need to consider these industries later, to identify when manufacturers are co-locating with end-use customers. 
 
-```{r, fig.width=18,fig.height=12}
+```{r, fig.width=9,fig.height=6}
 manf_input_sum <- manf_use_final %>% 
   left_join(ind_3digit %>% 
               rename(com_code_3 = naics_3digit, 
@@ -1187,7 +1366,7 @@ manf_input_sum <- manf_use_final %>%
   theme_bw() + 
   axis_theme
 
-manf_input_sum
+ggplotly(manf_input_sum)
 ```
 
 We now turn to the MAKE table. 
@@ -1270,16 +1449,21 @@ sup_ind_agg <- supply_table_clean %>%
 colnames(sup_ind_agg) <- c("industry_code", "industry_desc", "total_industry_supply")
 ```
 
-We now create some commodity level summaries, detailing the total commodity output, as well as total commodity imports
+We now create some commodity level summaries, detailing the total commodity output (measured as the total product supply in purchaser prices), as well as total commodity imports. 
 
 ```{r}
 sup_com_agg <- supply_table_clean %>% 
-  filter(industry_code %in% c("T007", "MCIF")) %>% 
+  filter(industry_code %in% c("T016", "MCIF", "T007")) %>% 
   select(commodity_code, commodity_desc, industry_code, industry_desc, value_num) %>% 
   pivot_wider(id_cols = c(commodity_code, commodity_desc), names_from = industry_desc, values_from = value_num) 
 
-colnames(sup_com_agg) <- c("commodity_code", "commodity_desc", "total_commodity_output", "total_commodity_imports")
+colnames(sup_com_agg) <- c("commodity_code", "commodity_desc","commodity_output_raw", "total_commodity_imports", "total_commodity_output")
 ```
+
+```{r}
+saveRDS(sup_com_agg, here("Input Output Data/sup_com_agg.RDS"))
+```
+
 
 We note that the very few of the top commodities are manufactured outputs. The predominant commodities are housing, hospitals, state and local government spending, R&D services, federal defense spending, insurance, management services, public housing, physicians offices, petroleum refiners, and electric power generation and transmission. The first strictly manufactured output is not until row 40, with Light truck and utility vehicle manufacturing. Certain sectors such as: Electric power generation, transmission, and distribution; Machinery, equipment and supplies; Architectural, engineering, and related services; might be related to manufacturing, but are not generally produced by manufacturing industries (as defined by NAICS codes). As such, we must remember that any final analysis will be extremely sensitive to the exact specifications of NAICS and commodity codes. 
 
@@ -1298,6 +1482,10 @@ supply_table_final <- supply_table_clean %>%
 ```
 
 Here, we bring in earlier segmented aggregate data about total industry supply to benchmark industry production of specific outputs against their total supply of outputs. 
+```{r}
+saveRDS(supply_table_final, here("Input Output Data/supply_table_final.RDS"))
+```
+
 
 ```{r}
 manf_supply <- supply_table_final %>% 
@@ -1385,7 +1573,7 @@ manf_rd <- manf_supply %>%
          rd_com_perc = value_num / total_commodity_output)  #percent of total R&D that comes from a specific industry
 ```
 
-We see that certain subsectors are for more R&D intensive than others, and that certain NAICS-3digit sectors overall are more R&D intensive than others. 
+We see that certain subsectors are far more R&D intensive than others, and that certain NAICS-3digit sectors overall are more R&D intensive than others. 
 
 ```{r, fig.width=18,fig.height=12}
 rd_graph <- manf_rd %>% 
@@ -1403,8 +1591,19 @@ rd_graph <- manf_rd %>%
 rd_graph
 ```
 
-```{r}
-ggplotly(rd_graph)
+```{r, fig.width=9,fig.height=6}
+rd_graph1 <- manf_rd %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_sup_perc)) %>% 
+  ggplot(aes(x = rd_sup_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+ggplotly(rd_graph1)
 ```
 
 
@@ -1428,8 +1627,19 @@ rd_com <- manf_rd %>%
 rd_com
 ```
 
-```{r}
-ggplotly(rd_com)
+```{r, fig.width=9,fig.height=6}
+rd_com1 <- manf_rd %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_com_perc)) %>% 
+  ggplot(aes(x = rd_com_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+ggplotly(rd_com1)
 ```
 
 
@@ -1441,8 +1651,8 @@ rd_sup_com <- manf_rd %>%
     rd_com_perc > .005 ~ industry_desc,
   )) %>% 
   ggplot(aes(x = rd_sup_perc, y = rd_com_perc, fill = naics_3digit_label, label = industry_desc)) + 
-  geom_point(aes(), shape = 21) + 
-  geom_label_repel(aes(label = outlier_label), size = 2, max.overlaps = 20) + 
+  geom_point(aes(), size = 4, alpha = 0.7, color = "black", shape = 21) + 
+  geom_label_repel(aes(label = outlier_label), size = 4, max.overlaps = 20) + 
   scale_fill_manual(values = emp_ind_vector) +
   guides(fill = "none") + 
   labs(x = "R&D Percent of Industry Total Supply", y = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector", title = "Industry % of total R&D Supply not always correlated with R&D intensity") + 
@@ -1450,6 +1660,11 @@ rd_sup_com <- manf_rd %>%
   axis_theme
 
 rd_sup_com
+```
+
+
+```{r}
+saveRDS(manf_rd, here("Input Output Data/rd_output.RDS"))
 ```
 
 ### Non-Primary Outputs
@@ -1502,7 +1717,8 @@ non_prim_ind <- non_prim_manf %>%
   geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
   labs(x = "Commodity percent of Total Industry Supply", y = "NAICS 3-digit Sector", fill = "3 digit Commodity Code") +
   theme_bw() + 
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") + 
+  axis_theme
 
 non_prim_ind
 ```
@@ -1515,7 +1731,8 @@ non_prim_com <- non_prim_manf %>%
   geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
   labs(x = "Industry Percent of Total Commodity Supply", y = "NAICS 3-digit Sector", fill = "3 digit Commodity Code") +
   theme_bw() + 
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") + 
+  axis_theme
 
 non_prim_com
 ```
@@ -1533,11 +1750,9 @@ non_prim_manf_comp <- non_prim_manf %>%
   theme_bw() + 
   axis_theme
 
-
-non_prim_manf_comp
 ```
 
-```{r}
+```{r, fig.width=9,fig.height=6}
 ggplotly(non_prim_manf_comp)
 ```
 
@@ -1733,13 +1948,21 @@ ind_order_final <- ind_order_cluster %>%
 
 We can now measure the distance between sectors within a cluster across our two clustering algorithms. We indeed see that there is a shift in the distribution of distances across clusters. Here, our measure of distance is actually the pearsons correlation coeffecient. Thus, values closer to 1 mean tha they are more related to one another. 
 
-```{r}
-ind_order_final %>% 
+```{r, fig.width=18,fig.height=12}
+dist_comp <- ind_order_final %>% 
+  ungroup() %>% 
   select(naics_3digit_label, h_label, naics_3mean, h_mean) %>% 
   distinct() %>% 
   ggplot() + 
   geom_density(aes(x = naics_3mean), fill = "blue", alpha = 0.7) + 
-  geom_density(aes(x = h_mean), fill = "purple", alpha = 0.7)
+  geom_density(aes(x = h_mean), fill = "purple", alpha = 0.7) +
+  geom_text(x = .5, y = 1.5, label = "Average Correlation, Input Clustering", color = "purple") +
+   geom_text(x = .8, y = 6, label = "Average Correlation,\nNAICS (Output) Clustering", color = "blue") + 
+  labs(x = "Average Cluster Correlation", y = "Observations") + 
+  theme_bw() + 
+  axis_theme
+
+dist_comp
 ```
 
 ```{r}
@@ -1749,7 +1972,8 @@ naics_clusters <- ind_order_final %>%
   labs(x = "Distribution of Distance between Sub-sectors and Their Clusters", y = "NAICS 3-Digit Codes") + 
   scale_fill_distiller(palette = "Spectral") + 
   guides(fill = "none") + 
-  theme_bw()
+  theme_bw() + 
+  axis_theme
 ```
 
 ```{r}
@@ -1760,7 +1984,8 @@ h_dist <- ind_order_final %>%
   labs(x = "Distribution of Distance between Sub-sectors and Their Clusters", y = "H-Clustering") + 
   scale_fill_distiller(palette = "Spectral") + 
   guides(fill = "none") + 
-  theme_bw()
+  theme_bw() + 
+  axis_theme
 ```
 
 If we compare the distribution of distances between sub-sectors across our two clustering algorithms, we see that while the NAICS 3-digit clustering has more very high-correlation sub-sectors, the drop off is faster and steeper for other sub-sectors, while the input-based clustering algorithm has a less steep drop off, and more clusters in the middle. 
@@ -1784,6 +2009,8 @@ manf_input_sum
 
 
 1) determine set of inputs used by manufacturing companies, (what else: set of manufacturing inputs used by non-manufacturing companies? )
+
+How should we look at production of inputs? Share of total input requirements that are produced? distance between vectors of outputs and vectors of inputs? 
 
 CRITICAL QUESTION: to what extent do we focus on networks within manufacturing v. flows outside of manufacturing? Maybe as a robustness test? 
 

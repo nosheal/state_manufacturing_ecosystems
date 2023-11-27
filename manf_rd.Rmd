@@ -1,0 +1,1620 @@
+---
+title: "The Use and Supply of Scientific R&D in Manufacturing"
+author: "Nikhil Kalathil"
+date: "2023-11-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warnings = FALSE)
+```
+
+```{r, include = FALSE}
+#Libraries
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+library(janitor)
+library(geofacet)
+library(jsonlite)
+library(ggridges)
+library(sf)
+library(here)
+library(patchwork)
+library(plotly)
+library(leaflet.extras)
+
+set.seed(37)
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18))
+```
+
+```{r, include = FALSE}
+#Area Crosswalks
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+
+area_codes <- left_join(area_codes, states) %>% 
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    area_title == "Puerto Rico" ~ "PR",
+    TRUE ~ state_abbr))
+```
+
+
+```{r, include = FALSE}
+#Map Data
+county_sf <- counties(cb = TRUE) %>% 
+  shift_geometry(position = "outside")
+states_sf <- states(cb = TRUE, resolution = "20m") %>%
+  shift_geometry(position = "outside")
+```
+
+```{r, include = FALSE}
+#Change projection of data for leaflet
+
+states_leaflet <- states_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+
+counties_leaflet <- county_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84') 
+```
+
+```{r, include = FALSE}
+#Convert county data to a table
+county_data <- counties_leaflet %>% 
+  as_tibble() %>% 
+  select(STATEFP, COUNTYFP) %>% 
+  mutate(area_fips = paste(STATEFP, COUNTYFP, sep = ""), 
+         st = as.numeric(STATEFP))
+```
+
+
+```{r, include = FALSE}
+#Get center of each county
+county_centers <- counties_leaflet %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  st_centroid() %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+```
+
+```{r, include = FALSE}
+#Load Existing Data
+qcew_3digits <- readRDS(here("State Data/qcew_3digit.RDS")) %>% 
+  mutate(industry_desc = substring(industry_title, 11))
+```
+
+```{r, include = FALSE}
+#Simplify to get industry codes
+ind_3digit <- qcew_3digits %>% 
+  select(naics_3digit = ind_code, naics_3digit_label = industry_desc) %>% 
+  distinct() %>% 
+  arrange(naics_3digit_label)
+```
+
+```{r, include = FALSE}
+#Define colors 
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+
+```{r}
+#create data frame mapping colors to industries
+col_map <- data.frame(ind_3digit$naics_3digit_label, emp_ind_vector)
+```
+
+```{r}
+rd_col <- data.frame(ind_3digit.naics_3digit_label = "Scientific R&D", emp_ind_vector = "#8DD3C7")
+```
+
+```{r}
+col_map <- bind_rows(col_map, rd_col)
+```
+
+```{r}
+#Get County GEOIDS
+cbp_geoid <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5)) %>% 
+  select(GEO_ID, NAME, area_fips) %>% distinct()
+
+cbp_empzes <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  select(EMPSZES_LABEL, EMPSZES) %>% 
+  distinct()
+```
+
+
+```{r, include = FALSE}
+#read county-level manufacturing data
+cbp_2019 <- read.csv(here("County Data/6_digit_naics_CBP.csv")) %>% 
+  left_join(cbp_geoid) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  mutate(across(.cols = c(EMP, ESTAB), ~ gsub(",", "", .)),
+    emp_num = as.numeric(EMP), 
+    ESTAB = as.numeric(ESTAB)) %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE))
+```
+
+```{r}
+#read Input Output Data
+use_table_final <- readRDS(here("Input Output Data/use_table_final.RDS"))
+sup_com_agg <- readRDS(here("Input Output Data/sup_com_agg.RDS"))
+supply_table_final <- readRDS(here("Input Output Data/supply_table_final.RDS"))
+```
+
+
+```{r, include = FALSE}
+#read R&D input and output data
+
+rd_inputs <- readRDS(here("Input Output Data/rd_inputs.RDS"))
+rd_output <- readRDS(here("Input Output Data/rd_output.RDS"))
+```
+
+```{r}
+#Read NAICS Codes
+naics_codes <- read.csv(here("NAICS/naics_codes.csv")) %>% 
+  select(c(2,3))
+
+colnames(naics_codes) <- c("industry_code", "industry_desc")
+```
+
+```{r, include = FALSE}
+naics_2 <- naics_codes %>% 
+  filter(str_length(industry_code) == 2 | industry_code == "31-33") %>% 
+  mutate(industry_code = case_when(
+    industry_code == "31-33" ~ 31.33, 
+    TRUE ~ as.numeric(industry_code)
+  ))
+```
+
+```{r}
+naics_sub <- function(var, num){
+   as.numeric(str_sub({{ var }}, 1, num))
+}
+```
+
+
+# Summary
+
+I investigate the use and supply of scientific R&D by the manufacturing sector using Input-Output data from 2017. Scientific R&D is primarily considered an output from establishments, and the value of scientific R&D as an intermediary input represents only 2% of the total value of scientific R&D as a product. The transportation industry, specifically aircraft and space sub-sectors, use a relatively high percentage of the use of R&D as an input, followed by the plastics and rubber product manufacturing, and petroleum and coal product manufacturing. The manufacturing sector accounts for approximately 30% of the total supply of scientific R&D (which is primarily supplied by the scientific R&D services NAICS code 541700). 
+
+# Introduction 
+
+The use and supply of scientific research and development by the 
+
+The role of innovation and technology development through R&D investments has long been linked to the competitiveness and productivity of the manufacturing sector. As early as the 1950s, empirical studies demonstrated the positive contribution of R&D expenditures to total factor productivity growth in manufacturing (Griliches 1980). More recently, research has highlighted the increasing reliance on external science by manufacturers. For example, Arora et al. (2016) find that large U.S. manufacturing firms substantially increased their linkages to public science between 1975-2006, with over 50% of new manufacturing patents citing public science by 2006. At the same time, the U.S. manufacturing sector remains an important performer of domestic R&D. Data from the National Science Foundation shows that while the manufacturing share of U.S. R&D performance declined from over 60% in the 1960s to under 30% by 2010, manufacturing continues to account for over 70% of U.S. business R&D and the majority of U.S. R&D devoted to applied research and experimental development (NSF 2020). Understanding the dual role of manufacturing as both a key supplier and consumer of scientific knowledge provides insight into the sector's innovation ecosystem.
+
+# Total Use and Supply of Scientific Research and Development
+
+In the input-output use table, scientific research and development is identified by commodity code "541700". It is also useful to note that there is a specific "Scientific Research and Development Services" industry, which is also industry 541700.^[As a note, the commodity code "5419A0:All other miscellaneous professional scientific and technical services" is only 14% the total output of 541700, but intermediate inputs in this commodity are 94% the value of total outputs. Industry code 5419A0 is 34% of the total value of scientific R&D 541700, and the value of the use of intermediate outputs is 37% the total output of this industry] As a commodity, scientific research and development is the seventh highest output commodity, and represents a large portion of total output in the country. 
+
+```{r}
+sup_com_agg %>% 
+  arrange(desc(total_commodity_output)) %>% 
+  filter(commodity_code != "T017") %>% 
+  select('Commodity Description' = commodity_desc, 'Total Commodity Output' = total_commodity_output) %>% 
+  head(10)
+```
+
+
+As an industry, however, scientific research and development services is the 34th highest output industry. In the scientific R&D industry, the value of intermediary inputs make up just under 53% of the value of total output by this industry. Fascinatingly, as a commodity, the value of scientific R&D as an intermediary input represents only 2% of total commodity output! This curious result suggests that scientific R&D is accounted for more as an output than as an input. Unsurprisingly, professional, scientific, and technical services use the majority of scientific R&D. The manufacturing sector uses just over 6% of the total supply of scientific R&D as an input. 
+
+```{r, include = FALSE}
+rd_use_2digit <- use_table_final %>% 
+  filter(commodity_code == "541700") %>% 
+  mutate(naics_2digit =  naics_sub(industry_code, 2),
+          naics_2digit = case_when(
+    naics_2digit >= 30 & naics_2digit < 40 ~ 31.33, 
+    naics_2digit > 43 & naics_2digit < 48 ~ 44,
+    TRUE ~ naics_2digit)) %>% 
+  group_by(naics_2digit) %>% 
+  reframe(ind_rd = sum(value_num)) %>% 
+  left_join(naics_2 %>% rename(naics_2digit = industry_code)) %>% 
+  mutate(industry_desc = case_when(
+    naics_2digit == 44 | naics_2digit == 45 ~ "Retail Trade", 
+    naics_2digit == 48 ~ "Transportation", 
+    TRUE ~ industry_desc
+  )) %>% 
+  ungroup() %>% 
+  mutate(total_rd_use = sum(ind_rd), 
+         ind_rd_share = ind_rd / total_rd_use) %>% 
+  distinct() %>% 
+  filter(ind_rd > 0) %>% 
+  ggplot(aes(x = ind_rd_share, y = reorder(as.factor(industry_desc), ind_rd_share))) +
+  geom_col(color = "black", fill = "dark blue", alpha = 0.7) + 
+  geom_text(aes(x = ind_rd_share + 0.01, label = round(100*ind_rd_share, 2))) + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "NACIS 2-Digit Sector", y = "Share of Total R&D Use", title = "Total R&D Use Small % of Total R&D Supply") + 
+  theme_classic() + 
+  axis_theme
+```
+
+```{r, fig.width=16,fig.height=10}
+rd_use_2digit
+```
+
+However, in terms of the output of scientific R&D, the manufacturing sector accounts for 30% of the total production of scientific R&D - the second highest total share of the supply of scientific R&D. 
+
+```{r, include = FALSE}
+rd_supply_2 <- supply_table_final %>% 
+  filter(commodity_code == "541700") %>% 
+  mutate(naics_2digit =  naics_sub(industry_code, 2),
+          naics_2digit = case_when(
+    naics_2digit >= 30 & naics_2digit < 40 ~ 31.33, 
+    naics_2digit > 43 & naics_2digit < 48 ~ 44,
+    TRUE ~ naics_2digit)) %>% 
+  group_by(naics_2digit) %>% 
+  reframe(ind_rd = sum(value_num)) %>% 
+  left_join(naics_2 %>% rename(naics_2digit = industry_code)) %>% 
+  mutate(industry_desc = case_when(
+    naics_2digit == 44 | naics_2digit == 45 ~ "Retail Trade", 
+    naics_2digit == 48 ~ "Transportation", 
+    naics_2digit == 49 ~ "Warehousing",
+    TRUE ~ industry_desc
+  )) %>% 
+  ungroup() %>% 
+  mutate(total_rd_use = sum(ind_rd), 
+         ind_rd_share = ind_rd / total_rd_use) %>% 
+  distinct() %>% 
+  filter(ind_rd > 0) %>% 
+  ggplot(aes(x = ind_rd_share, y = reorder(as.factor(industry_desc), ind_rd_share))) +
+  geom_col(color = "black", fill = "gold", alpha = 0.7) + 
+  geom_text(aes(x = ind_rd_share + 0.01, label = round(100*ind_rd_share, 2))) + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "NACIS 2-Digit Sector", y = "Share of Total R&D Supply") + 
+  theme_classic() + 
+  axis_theme
+```
+
+```{r, fig.width=16,fig.height=10}
+rd_supply_2
+```
+
+With this summary of the total use and supply of scientific R&D, I turn to a more in depth analysis of the use and supply of scientific R&D by the manufacturing industry in specific. 
+
+# Manufacturing Sector R&D Use 
+
+Because the use of scientific R&D as an intermediary input is so much smaller than the total output of scientific R&D, I first summarize trends in the use of R&D across manufacturing sectors. The aircraft manufacturing sector makes up for the highest percent share of total R&D use, followed by propulsion units and parts for space vehicles and guided missiles. Overall, the transportation equipment manufacturing set of industries make up the largest portion of use of scientific R&D. Curiously, computer and electronic manufacturing as an industry does not use a significant percentage of scientific R&D as an input. Indeed, the largest computer and electronics manufacturing sub-sector's use of scientific R&D are the Electromedical and electrotherapeutic apparatus; and the electricity and signal testing instruments manufacturing sub-sectors, but even these sectors only make up .1% of the total use of R&D as an input, and .01% of total industry use of intermediate inputs. As a note, the "miscellaneous professional, scientific, technical, and other services" category has activity across many more computer and electronics sectors. This activity might be describing certain design activities, given that the only other explicitly "design" focused industries/commodities are computer and specialized design services. 
+
+
+```{r, fig.width=9,fig.height=6}
+rd_out1 <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_use_perc), 
+         industry.rd.use = paste(round(100*rd_use_perc, 2), "%", sep = "")) %>% 
+  ggplot(aes(x = rd_use_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, text = industry_desc, label = industry.rd.use)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Share of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+
+Plastics and rubber manufacturing as well as petroleum and coal product manufacturing make up the other manufacturing industries that account for the total use of R&D by the manufacturing sector. The distribution of the use of R&D by manufacturing industries varies substantially, and the 3-digit NAICS sectors that see a high percent of the total use of R&D as an intermediate input are not always the ones that might be expected (e.g. food manufacturing, fabricated metal product manufacturing, over electrical equipment manufacturing). 
+
+```{r, fig.width=16,fig.height=10}
+rd_out_graph <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_use_perc), 
+         ind_label = case_when(rd_use_perc > 0.05/100 ~ industry_desc)) %>% 
+  ggplot(aes(x = rd_use_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_label_repel(aes(label = ind_label), nudge_y = 0.3) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Share of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_out_graph
+```
+
+
+We also see that the use of R&D makes up for a very small portion of the total use of intermediate inputs by manufacturing industries. The industries and sectors that represent a high percent of the total use of R&D generally also see higher total R&D share of industry inputs. Notably, fabricated metal manufacturing has a higher share of total industry output relative to how much total R&D supply that sector uses. 
+
+```{r, fig.width=9,fig.height=6}
+rd_out_ind1 <- rd_inputs %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd_ind_perc), 
+         rd_industry_percent = paste(round(100*rd_use_perc, 2), "%", sep = "")) %>% 
+  ggplot(aes(x = rd_ind_perc, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, text = industry_desc, label = rd_industry_percent)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Total Industry Input", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+Certain paper manufacturing industries appear to have a higher share of total industry output relative to how much total R&D supply those sectors use, and that aircraft manufacturing uses a larger total percent of R&D relative to the R&D share of industry total intermediate inputs. 
+
+```{r}
+use_col <- get_col_match(rd_inputs %>% filter(value_num > 0) %>% mutate(EMPSZES = 1), 1)
+
+rd_in_comp <- rd_inputs %>% 
+  filter(value_num > 0 ) %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(outlier_label = case_when(
+    rd_ind_perc > 0.000083 ~ industry_desc,
+    rd_use_perc > 0.000029 ~ industry_desc,
+  ), 
+  rd.percent.industry_inputs = round(rd_ind_perc*100, 2), 
+  industry.percent.total_rd_inputs = round(rd_use_perc*100,2)) %>%
+  ggplot(aes(x = rd.percent.industry_inputs, y = industry.percent.total_rd_inputs, fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), size = 4, alpha = 0.7, color = "black", shape = 21) + 
+  #geom_label(aes(label = outlier_label), size = 4, max.overlaps = 40) + 
+  scale_fill_manual(values = use_col) +
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Intermediate Inputs", y = "Industry Percent of Total R&D Use", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r, fig.width=9,fig.height=6}
+ggplotly(rd_in_comp)
+```
+
+In summary, the use of R&D as an input makes up a very small percentage of both the total total value of scientific R&D, as well as the use of intermediary inputs by manufacturing sub-sectors. Nonetheless, certain transportation, plastics and rubber products, petroleum , fabricated metal, printing, and paper manufacturing sub-sectors make up either a relatively high share of total R&D use, or see a relatively high share of R&D percent of total use of intermediary inputs.
+
+# Manufacturing Sector Supply of Scientific R&D
+
+The manufacturing sector supply of scientific R&D is much more interesting. As mentioned above, the manufacturing sector accounts for roughly 30% of total scientific r&D supply (compared to the manufacturing sector's 13% share of national GDP in 2019). However, there is substantial variation in the sectors that supply R&D, as well as in the intensity of sectoral production of R&D. The computer and electronics manufacturing sector has the highest R&D output out of the 3-digit manufacturing sectors. This sector is followed quickly by chemical manufacturing, with a slight drop off before transportation equipment manufacturing, account for around 5% of total R&D supply. Miscellaneous (specifically the surgical and medical adjacent manufacturing sub-sectors in this sector), as well as machinery manufacturing sectors follow after, after which there is another drop-off before fabricated metal, food, and electrical equipment manufacturing. 
+
+However, we also see that the chemical manufacturing sector has the sector with the greatest share of total R&D supply (pharmaceutical manufacturing), and that there is a wide distribution of supply of R&D across the computer and electronics manufacturing sector, as well as the transportation manufacturing sector. The sub sectors that contribute the most to total R&D supply in the transportation manufacturing sector also include other manufacturing of: aircraft parts, as well as guided missile and space vehicle; 
+automobile; and propulsion units and parts for space vehicles and guided missiles. 
+
+
+```{r}
+rd_output <- rd_output %>% 
+  rename(industry.share_of.rd_supply = rd_com_perc, 
+         rd.share_of.industry_supply = rd_sup_perc)
+```
+
+```{r}
+manf_rd_total <- rd_output %>% 
+  ungroup() %>% 
+  reframe(manf_rd = sum(value_num)) %>% 
+  unlist() %>% 
+  unname()
+```
+
+
+```{r}
+output_sum <- rd_output %>% 
+  group_by(naics_3digit_label) %>% 
+  reframe(rd_total = sum(value_num), total_commodity_output, total_industry_supply = sum(total_industry_supply)) %>% 
+  distinct() %>% 
+  mutate(industry.share_of.rd_supply = rd_total / total_commodity_output, 
+         rd.share_of.industry_supply = rd_total / total_industry_supply)
+```
+
+```{r}
+output_graph <- output_sum %>% 
+  ggplot() + 
+  geom_col(aes(x = industry.share_of.rd_supply, y = reorder(naics_3digit_label, industry.share_of.rd_supply), fill = naics_3digit_label), alpha = 0.7, color = "black") +
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(x = "Sector Percent of Total R&D Supply", y = "") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+rd_output_of_manf_total <- rd_output %>% 
+  mutate(manf_rd_share = value_num/manf_rd_total) %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(manf_rd_share), 
+         ind_label = case_when(industry.share_of.rd_supply > .00128
+ ~ industry_desc)) %>% 
+  ggplot(aes(x = manf_rd_share, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r, fig.width=16,fig.height=10}
+rd_com <- rd_output %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(industry.share_of.rd_supply), 
+         ind_label = case_when(industry.share_of.rd_supply > .00128
+ ~ industry_desc)) %>% 
+  ggplot(aes(x = industry.share_of.rd_supply, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_label_repel(aes(label = ind_label), max.overlaps = 15) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_com
+```
+
+Each manufacturing industry contributes little to total R&D supply. This is not surprising. Because of the way that NAICS codes work, we expect that establishments with R&D output will be classified in the 500's, rather than in manufacturing. Curiously, the industries that contribute more to the total supply of R&D are NOT always the same as the industries that have a higher share of total industry supply. Certain manufacturing sectors such as electronic computer manufacturing produce R&D valued at more than 50% of total industry supply, and 18 sub-sectors across the chemical, computer & electronics, medical, and transportation manufacturing sectors produce scientific R&D valued at more than 10% of their total industry output. 
+
+```{r, fig.width=16,fig.height=10}
+rd_graph <- rd_output %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd.share_of.industry_supply), 
+         ind_label = case_when(rd.share_of.industry_supply >= .1 ~ industry_desc)) %>% 
+  ggplot(aes(x = rd.share_of.industry_supply, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_vline(xintercept = .1 ) + 
+  geom_point(aes(), shape = 21) + 
+  geom_label_repel(aes(label = ind_label)) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+
+rd_graph
+```
+
+```{r, fig.width=9,fig.height=6}
+rd_graph1 <- rd_output %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(max_rd = max(rd.share_of.industry_supply)) %>% 
+  ggplot(aes(x = rd.share_of.industry_supply, y = reorder(naics_3digit_label, max_rd), fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme 
+```
+
+Manufacturing sub-sector percent of total scientific research and development supply is not always correlated with the "intensity" of scientific R&D in that sub-sector. The intensity of scientific R&D activity is the value of scientific R&D as an output as a percent of total sub-sector output. For example, pharmaceutical manufacturing accounts for almost 5% of total R&D supply, far more than any other manufacturing sub-sector accounts for, and yet R&D output accounts for less than 20% of the value of total sub-sector outputs. Similarly, semiconductor and related device manufacturing accounts for a relatively higher share of total R&D supply, while electronic computer manufacturing accounts for a relatively low share of total R&D supply given the intensity of R&D output in that sector (more than 50% of the value of total sub-sector output). 
+
+
+```{r, fig.width=16,fig.height=10}
+rd_sup_com <- rd_output %>% 
+  group_by(naics_3digit_label) %>% 
+  mutate(outlier_label = case_when(
+    rd.share_of.industry_supply > 0.10 ~ industry_desc, 
+    industry.share_of.rd_supply > .005 ~ industry_desc,
+  )) %>% 
+  ggplot(aes(x = rd.share_of.industry_supply, y = industry.share_of.rd_supply, fill = naics_3digit_label, label = industry_desc)) + 
+  geom_point(aes(), size = 4, alpha = 0.7, color = "black", shape = 21) + 
+  geom_label_repel(aes(label = outlier_label), size = 4, max.overlaps = 20) + 
+  scale_fill_manual(values = emp_ind_vector) +
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Supply", y = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector", title = "Industry % of total R&D Supply not always correlated with R&D intensity") + 
+  theme_bw() + 
+  axis_theme + 
+  title_theme
+
+rd_sup_com
+```
+
+## Input Use Clusters Production of Scientific R&D 
+
+*RETURN TO THIS - DOESN'T MEAN ANYTHING WITHOUT A QUALITATIVE DESCRIPTION OF CLUSTER ASSIGNMENTS
+
+```{r}
+#get input clustering assignments
+cluster_assignments <- readRDS(here("Input Output Data/cluster_assignments.RDS")) %>% 
+  rename(industry_desc = ind_desc, industry_code = ind_code)
+```
+
+```{r}
+#introduce color shifting functions
+ExpandColorsSHIFT <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#66C2A5"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+```{r}
+#create new colors
+h_cols <- ExpandColorsSHIFT(emp_ind_vector, 4) 
+
+h_cols <- h_cols %>% 
+  group_by(original.color) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 4) %>% 
+  ungroup() %>% 
+  select(expanded.color) %>% 
+  unlist() %>% 
+  unname()
+
+```
+
+```{r}
+h_label_1 <- rd_output %>% 
+  left_join(cluster_assignments) %>% 
+  mutate(h_label = paste("H_", h_clusters, sep = "")) %>% 
+  group_by(h_label) %>% 
+  mutate(max_rd = max(industry.share_of.rd_supply), 
+         ind_label = case_when(industry.share_of.rd_supply > .00128
+ ~ industry_desc)) %>% 
+  ggplot(aes(x = industry.share_of.rd_supply, y = reorder(h_label, max_rd), fill = h_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_label_repel(aes(label = ind_label), max.overlaps = 15) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = h_cols) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "Industry Percent of Total R&D Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+h_label_2 <- rd_output %>% 
+  left_join(cluster_assignments) %>% 
+  mutate(h_label = paste("H_", h_clusters, sep = "")) %>% 
+  group_by(h_label) %>% 
+  mutate(max_rd = max(industry.share_of.rd_supply), 
+         ind_label = case_when(industry.share_of.rd_supply > .00128
+ ~ industry_desc)) %>% 
+  ggplot(aes(x = rd.share_of.industry_supply, y = reorder(h_label, max_rd), fill = h_label, label = industry_desc)) + 
+  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
+  geom_vline(xintercept = .1 ) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = h_cols) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Percent of Industry Total Supply", y = "NAICS 3-digit Sector") + 
+  theme_bw() + 
+  axis_theme
+```
+
+
+# The Distribution of R&D Activity Across Geographies
+
+Manufacturing activity is distributed unevenly across geographies in the United States. The above discussions illustrate sectoral level variation (meaningful at the 6-digit level) in R&D activity by manufacturing sub-sectors, and provide three measures of R&D activity: 1) the use of R&D as an input by manufacturing sub-sector, 2) the supply of scientific R&D as a percent of total R&D supply, and 3) scientific R&D output share of total sub-sector output value. While the use of scientific R&D as an input might be interesting, especially in the case of highlighting how certain sectors such as petroleum refineries, other plastic products, aircraft, and space propulsion manufacturing operate differently than most other manufacturing sub-sectors in their use of scientific R&D as an input, I focus on R&D outputs as a measure of R&D activity.^[Including a cutoff for inputs of the R&D share of industry inputs being greater than 0.1% or the industry share of total R&D input use being greater than 0.05% adds 20 industries to a list of 20 industries, for a total of 40 industries.]
+
+To accomplish this, I join the input output data to earlier created County Level Business Patterns data about the geographical distribution of manufacturing establishments. 
+
+```{r}
+#Begin with joining R&D inputs and outputs data by manufacturing sub-sector
+#If we want to use inputs: #rd.share_of.industry_inputs >= 0.1/100 | industry.share_of.rd_inputs >= 0.05/100 |
+
+manf_rd_use <- rd_inputs %>% 
+  select(industry_desc, industry_code, naics_3digit_label, rd_inputs_ind = value_num, industry.share_of.rd_inputs = rd_use_perc, rd.share_of.industry_inputs = rd_ind_perc, total_rd_inputs = intermediate, total_rd_use = total_use) %>% 
+  full_join(rd_output %>% 
+              select(industry_desc, industry_code, naics_3digit_label, rd_supply_ind = value_num, rd.share_of.industry_supply, industry.share_of.rd_supply)) %>% 
+  mutate(rd_intensive = case_when(
+    rd.share_of.industry_supply >= 0.1 | industry.share_of.rd_supply >= 0.005 ~ "R&D Intensive"
+  ))
+```
+
+```{r}
+#We then read in a variety of functions and data to provide a baseline for our maps. 
+#Read State Level 2019 Data
+state_quads <- readRDS(here("State Data/state_quadrants_1.RDS")) %>%  
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    area_title == "Puerto Rico" ~ "PR",
+    TRUE ~ state_abbr))
+```
+
+```{r}
+#Clean format, merge data
+state_manf_2019 <- state_quads %>% 
+  mutate(NAME = area_title) %>% 
+  left_join(states_leaflet, .) %>% 
+  filter(!is.na(STATEFP)) %>% 
+  mutate(emp_k = emp / 1000,
+    emp_thousands = prettyNum(emp, big.mark = ',',scientific=FALSE), 
+    manf_emp_share_perc = manf_emp_share*100,
+    manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
+```
+
+```{r}
+#DEFINE COLOR FUNCTION for MAPS
+col_def <- function(data, var, col_scale){ 
+  
+  col_pal <- colorNumeric(palette = col_scale, domain = data$var, reverse = TRUE)
+  
+  }
+```
+
+```{r}
+#Define dynamic column selector function 
+
+var_def <- function(data, var) {
+  
+  var_list <- data %>% 
+    tibble() %>% 
+    select({{ var }}) %>% 
+    unlist() %>% 
+    unname()
+  
+  
+  
+  return(var_list)
+}
+```
+
+```{r}
+#Define dynamic label Creator for maps
+
+label_1 <- function(data, var, text, sector){
+  
+  name_vec <- var_def(data, NAME) 
+  
+  year_vec <- var_def(data, year)
+  
+  val_vec <- var_def(data, {{ var }})
+  
+  if(typeof(year_vec) == "character"){
+    
+    sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %s,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+    ) %>% lapply(htmltools::HTML) }
+  
+  else{
+  
+  sprintf(paste("<strong>%s</strong><br/>%s <br/> <i>", text, "<br/> %g,", sector, "</i>", sep = ""),
+  name_vec, val_vec, year_vec
+  
+) %>% lapply(htmltools::HTML) } 
+  
+}
+```
+
+```{r}
+#function to build map (no popups)
+
+build_map_no_popups <- function(data, var1, label_var, colors, text, sector, legend_title) { 
+  
+  col_list <- var_def(data, {{ var1 }})
+  
+  col_fun <- col_def(data, var1, colors)
+  
+  
+  
+  m <- data %>% 
+  leaflet() %>% 
+  addPolygons(
+  fillColor = ~col_fun(col_list),
+  weight = 2,
+  opacity = 1,
+  color = "black",
+  dashArray = "3",
+  fillOpacity = 0.7) %>% 
+    addLegend(pal = col_fun, values = col_list, opacity = 0.7, title = legend_title,
+  position = "bottomleft")
+  
+  return(m) 
+  
+} 
+```
+
+
+```{r}
+#Create Dataset for Base Maps
+state_gdp_2019 <- state_manf_2019 %>% 
+  filter(!is.na(gdp_manf)) %>% 
+  mutate(gdp_manf_b = gdp_manf/10000,
+    gdp_manf_b_clean = round(gdp_manf_b, 2), 
+    manf_gdp_share_perc = manf_gdp_share*100, 
+    manf_gdp_share_clean = paste(round(manf_gdp_share_perc, 2), "&#37", sep = ""),
+    manf_emp_share_perc = manf_emp_share*100, 
+    manf_emp_share_clean = paste(round(manf_emp_share_perc, 2), "&#37", sep = ""))
+```
+
+```{r}
+#We start with a base map of the manufacturing share of state employment in 2019.
+gdp_manf_share <- build_map_no_popups(state_gdp_2019, manf_gdp_share_perc, manf_gdp_share_clean, "Greens", "Annual &#37 of State GDP", " (NAICS 31-33)", "2019 NAICS 31-33 <br/> Annual &#37 of State GDP")
+
+gdp_manf_share
+```
+
+```{r}
+#clean CBP data slightly
+cbp_2019 <- cbp_2019 %>% 
+  mutate(naics_3digit = as.numeric(substr(NAICS2017, 1, 3))) %>% 
+  left_join(ind_3digit, .) %>% 
+  left_join(cbp_empzes)
+``` 
+
+```{r}
+#Create Benchmark for Employee Size
+emp_estimate <- function(data){
+  data %>% 
+    mutate(emp_est = case_when(
+    EMPSZES == 210 ~ 3, 
+    EMPSZES == 220 ~ 7, 
+    EMPSZES == 230 ~ 15, 
+    EMPSZES == 241 ~ 35, 
+    EMPSZES == 242 ~ 75, 
+    EMPSZES == 251 ~ 175, 
+    EMPSZES == 252 ~ 375, 
+    EMPSZES == 254 ~ 750, 
+    EMPSZES == 260 ~ 1000
+  ))
+  
+} 
+```
+
+```{r}
+#Adjust CBP data with benchmarks
+cbp_2019 <- cbp_2019 %>% 
+  emp_estimate() %>% 
+  mutate(emp_tot = case_when(
+    is.na(emp_est) ~ emp_num, 
+    TRUE ~ emp_est * ESTAB
+  ))
+```
+
+```{r}
+# We now define a series of functions to map establishments on top of our baseline maps.
+
+#Get number of establishments by NAICS
+estab_size_count <- function(data, condition) { 
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    group_by(NAICS2017_LABEL, naics_3digit_label) %>% 
+    reframe(estabs = sum(ESTAB)) 
+}
+```
+
+```{r}
+# Map 3-digit NAICS to 3-digit Colors
+get_col_vec <- function(data, condition){ 
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(naics_3digit_label) %>% 
+    distinct() %>% 
+    unlist()
+  }
+```
+
+```{r}
+#Function to get appropriate 3-digit colors
+get_col_match <- function(data, condition){ 
+  
+ col_vec <- get_col_vec(data, condition)
+ 
+ col_out <- col_map %>% 
+   filter(ind_3digit.naics_3digit_label %in% col_vec) %>% 
+   select(emp_ind_vector) %>% 
+   unlist() %>% 
+   unname()
+ 
+  return(col_out)
+  
+}
+```
+
+```{r}
+#Create Labels (If needed)
+create_graph_labels <- function(data){
+  
+  data %>% 
+    group_by(naics_3digit_label) %>% 
+    mutate(naics_label = case_when(
+      estabs == max(estabs) ~ naics_3digit_label
+    )) %>% 
+    ungroup()
+  
+}
+```
+
+```{r}
+#Create functions to county the number of counties and sub-sectors
+county_n <- function(data, condition){
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(NAME) %>% 
+    distinct() %>% 
+    unlist() %>% 
+    unname()
+}
+
+sector_n <- function(data, condition){
+  data %>% 
+    filter(EMPSZES == condition) %>% 
+    select(NAICS2017_LABEL) %>% 
+    distinct() %>% 
+    unlist() %>% 
+    unname()
+}
+
+title_fun <- function(data, condition){
+  
+  count_n <- length(county_n(data, condition))
+  sector_n <- length(sector_n(data, condition))
+  
+  title_out <- paste(sector_n, "Sub-Sectors, Across", count_n, "Counties", sep = " ")
+  
+  return(title_out)
+}
+```
+
+
+```{r}
+#We also define a few helper functions to join our data to county-centers, and create our map.  
+
+#Join with county centers
+county_join <- function(data) {
+  data %>% 
+    inner_join(county_centers %>% rename(GEO_ID = AFFGEOID, state_fips = STATEFP, county_fips = COUNTYFP, county_name = NAME), .) 
+}
+```
+
+```{r}
+#Define function to clean and round a share variable
+clean_perc <- function(var){
+  
+  (round({{ var }}*100, 2))
+  
+}
+```
+
+
+```{r}
+#Define dynamic label Creator
+
+label_2 <- function(data, var, condition){
+  
+  sector_vec <- var_def(data, NAICS2017_LABEL) 
+  
+  county_vec <- var_def(data, NAME)
+  
+  val_vec <- var_def(data, {{ var }})
+  
+  estabs_vec <- data %>% 
+    group_by(NAICS2017_LABEL, NAME) %>% 
+    mutate(tot_estabs = sum(ESTAB)) %>% 
+    var_def(tot_estabs)
+  
+  emp_vec <- data %>% 
+    var_def(emp_tot)
+  
+  # rd_use_1 <- data %>% 
+  #   var_def(industry.share_of.rd_inputs)
+  # 
+  # rd_use_2 <- data %>% 
+  #   var_def(rd.share_of.industry_inputs)
+  # 
+  # rd_supply_1 <- data %>% 
+  #   var_def(rd.share_of.industry_supply)
+  # 
+  # rd_supply_2 <- data %>% 
+  #   var_def(industry.share_of.rd_supply)
+  
+  
+  sprintf("<strong>%s</strong><br/>%s <br/>%s <br/> Total Establishments: %s<br/> Estimated Employees: %s", #<br/>Percent of RD Inputs: <strong>%s</strong> RD Percent of Inputs: <strong>%s</strong> <br/>
+          #Percent of RD Supply: <strong>%s</strong> RD Percent of Supply: <strong>%s</strong>",
+          sector_vec, county_vec, val_vec, estabs_vec, emp_vec) %>% 
+    lapply(htmltools::HTML) 
+  
+}
+```
+
+```{r}
+#Final Mapping function
+estab_size_circles <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) %>% 
+    mutate(scale_emp = 10*emp_tot)#0.01106
+  
+  col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(col_list, map_data$naics_3digit_label)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircles(data = map_data,
+                   radius = rad, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(naics_3digit_label), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                    label = popup_label,
+                    labelOptions = labelOptions(
+                      style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "15px",
+                      direction = "auto")
+                   ) %>% 
+    addResetMapButton()
+}
+```
+
+```{r}
+#Final Mapping function (dynamic scaling with number of employees)
+estab_size_circles_dynamic <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) %>% 
+    mutate(scale_emp = 10*emp_tot)#0.01106
+  
+  col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(col_list, map_data$naics_3digit_label)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircles(data = map_data,
+                   radius = map_data$scale_emp, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(naics_3digit_label), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                    label = popup_label,
+                    labelOptions = labelOptions(
+                      style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "15px",
+                      direction = "auto")) %>% 
+    addResetMapButton()
+}
+```
+
+```{r, eval = FALSE}
+#Final Mapping function (dynamic scaling with number of employees)
+estab_size_circles_dynamic_log <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) %>% 
+    mutate(scale_emp = log(emp_tot))#0.01106
+  
+  col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(col_list, map_data$naics_3digit_label)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircleMarkers(data = map_data,
+                   radius = map_data$scale_emp, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(naics_3digit_label), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                  clusterOptions = markerClusterOptions()) %>% 
+    addResetMapButton()
+}
+```
+
+
+
+```{r, fig.width=11,fig.height=8}
+
+all_manf_map <- estab_size_circles_dynamic(gdp_manf_share, cbp_2019, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
+
+all_manf_map
+```
+
+
+The location of manufacturing activity varies substantially by geography, and is dominated by specific large manufacturing clusters across chemical, computer and electronic, medical, and transportation equipment manufacturing. However, how does the geographic distribution of manufacturing activity change if only R&D intensive manufacturing sub-sectors are considered? 
+
+```{r}
+#The Process of Merging Input Output Manufacturing Codes With CBP Codes is Rather Complex. We go through an index of CBP Codes and match them to our IO Codes
+
+#INDEX OF CBP CODES
+cbp_codes <- cbp_2019 %>% 
+  mutate(industry_code = as.character(NAICS2017)) %>% 
+  select(industry_code, NAICS2017_LABEL = NAICS2017_LABEL) %>% 
+  mutate(industry_code = case_when(
+    industry_code %in% c("333995", "333996") ~ "333995", 
+    TRUE ~ industry_code
+  ),
+  NAICS2017_LABEL = case_when(
+    industry_code %in% c("333995", "333996") ~ "Fluid power process machinery", 
+    TRUE ~ NAICS2017_LABEL
+  )) %>% 
+  distinct()
+```
+
+```{r}
+#INDEX OF IO CODES
+io_manf_codes <- manf_rd_use %>% 
+  select(ind_code = industry_code, industry_desc) %>% 
+  distinct() %>% 
+  mutate(ind_code_original = ind_code, 
+    ind_code_clean_raw = as.numeric(sub("A|B|N.*", "", ind_code))) %>% 
+  mutate(ind_code_clean = case_when(
+    ind_code == "33399A" ~ 333999, 
+    ind_code %in% c("33399B") ~ 333995, 
+    TRUE ~ ind_code_clean_raw
+  )) 
+```
+
+```{r}
+#We have to cycle through the different lengths of available information that we have, starting with 6 digits. 
+cbp_holder <- cbp_codes %>% 
+  mutate(naics_merge = as.numeric(industry_code)) %>% 
+  inner_join(io_manf_codes %>% 
+              filter(str_length(ind_code_clean) == 6) %>% 
+              mutate(naics_merge = as.numeric(ind_code_clean)))
+```
+
+```{r}
+#WE repeat the process for 5 digits
+cbp_5 <- cbp_codes %>% 
+  filter(!industry_code %in% cbp_holder$industry_code) %>% 
+  mutate(naics_merge = naics_sub(industry_code, 5)) %>% 
+  distinct() %>% 
+  inner_join(io_manf_codes %>% 
+              filter(!ind_code %in% cbp_holder$industry_code, 
+                     str_length(ind_code_clean_raw) >= 5, 
+                     !ind_code %in% c("33399A", "33399B")) %>% 
+              mutate(naics_merge = naics_sub(ind_code_clean, 5)))
+```
+
+```{r}
+#For 4 digits
+cbp_4 <- cbp_codes %>% 
+  filter(!industry_code %in% cbp_holder$industry_code, 
+         !industry_code %in% cbp_5$industry_code) %>% 
+  mutate(naics_merge = naics_sub(industry_code, 4)) %>% 
+  distinct() %>% 
+  inner_join(io_manf_codes %>%
+                filter(!ind_code %in% cbp_holder$ind_code, 
+                       !ind_code %in% cbp_5$ind_code,
+                     str_length(ind_code_clean_raw) >= 4) %>% 
+              mutate(naics_merge = naics_sub(ind_code_clean, 4)))
+```
+
+
+```{r}
+#For 3 Digits
+cbp_3 <- cbp_codes %>% 
+  filter(!industry_code %in% cbp_holder$industry_code, 
+         !industry_code %in% cbp_5$industry_code, 
+         !industry_code %in% cbp_4$industry_code) %>% 
+  mutate(naics_merge = naics_sub(industry_code, 3)) %>% 
+  distinct() %>% 
+  inner_join(io_manf_codes %>%
+                filter(!ind_code %in% cbp_holder$ind_code, 
+                       !ind_code %in% cbp_5$ind_code,
+                       !ind_code %in% cbp_4$ind_code,
+                     str_length(ind_code_clean_raw) >= 3) %>% 
+              mutate(naics_merge = naics_sub(ind_code_clean, 3))) 
+```
+
+```{r}
+#at this point, investigating the data, we see that we only miss two codes in the CBP data set: welding equipment manufacturing and scale and balance manufacturing. We miss Pulp manufacturing in the IO dataset. 
+
+#Create our crosswalk
+cbp_io <- cbp_holder %>% 
+  bind_rows(cbp_5) %>% 
+  bind_rows(cbp_4) %>% 
+  bind_rows(cbp_3) %>% 
+  distinct()
+```
+
+
+```{r}
+#With this crosswalk, we can identify manufacturing sub-sectors that we have input-output data for, and join these back to our original CBP data frame
+rd_final <- manf_rd_use %>% 
+  rename(ind_desc = industry_desc, ind_code_original = industry_code) %>% 
+  left_join(cbp_io) %>% 
+  mutate(NAICS2017 = as.integer(industry_code)) 
+```
+
+
+```{r}
+#Create list of R&D intensive manufacturing codes
+rd_codes <- rd_final %>% 
+  filter(!is.na(rd_intensive)) %>% 
+  select(NAICS2017) %>% 
+  distinct() %>% 
+  unlist() %>% 
+  unname()
+```
+
+
+```{r}
+#Join With CBP 2019 Data
+cbp_io_final <- rd_final %>%
+  select(-c(naics_3digit_label, NAICS2017)) %>% 
+  left_join(cbp_2019, .)
+```
+
+
+```{r}
+#Focus only on R&D
+cbp_rd <- cbp_io_final %>% 
+  filter(!is.na(rd_intensive), EMPSZES == 1) %>% 
+  group_by(GEO_ID, EMPSZES_LABEL, EMPSZES, naics_merge, ind_desc, naics_3digit_label, NAME) %>% 
+  reframe(emp_tot = sum(emp_tot), emp_num = sum(emp_num), ESTAB = sum(ESTAB), industry.share_of.rd_inputs, rd.share_of.industry_inputs, rd.share_of.industry_supply, industry.share_of.rd_supply) %>%
+  distinct() %>% 
+   mutate(across(.cols = c(industry.share_of.rd_inputs, rd.share_of.industry_inputs, rd.share_of.industry_supply, industry.share_of.rd_supply), ~ clean_perc(.))) %>% 
+  mutate(NAICS2017_LABEL = ind_desc)
+  #filter(!is.na(industry.share_of.rd_inputs) | !is.na(rd.share_of.industry_inputs) | !is.na(rd.share_of.industry_supply) | !is.na(industry.share_of.rd_supply)) %>% 
+```
+
+Mapping the distribution of R&D activity by establishments across the US reveals that R&D intensive industries (as measured by the top 20 industries in terms of R&D output activity), are distributed across only 477 (or 25%) of the counties across the US. Dental laboratories have by far the most number of establishments, followed by other electronic component, pharmaceutical, and surgical and medical instrument manufacturing. 
+```{r}
+rd_map_col <- get_col_match(cbp_rd, 1)
+
+rd_map_estabs <- cbp_rd %>% 
+  mutate(NAICS2017_LABEL = str_remove(gsub('[[:punct:] ]+',' ',NAICS2017_LABEL), "manufacturing")) %>% 
+  estab_size_count(1) %>% 
+  ggplot() + 
+  geom_col(aes(x = estabs, y = reorder(NAICS2017_LABEL, estabs), fill = naics_3digit_label), color = "black") + 
+  scale_fill_manual(values = rd_map_col) + 
+  scale_y_discrete(labels = scales::label_wrap(50)) + 
+  theme_bw() + 
+  labs(x = "Total Number of Establishments", y = "Input Output Manufacturing Label", fill = "3-Digit NAICS Label", title = "R&D Intesive Manufacturing Establishments", subtitle = title_fun(cbp_rd, 1)) + 
+  theme(legend.position = "bottom")
+
+rd_map_estabs + guides(fill = "none")
+```
+
+When examining the distribution of R&D intensive manufacturing by employment, aircraft and pharmaceutical manufacturing dominate the total number of employees, followed by surgical and medical instrument, and semiconductor and related device manufacturing. 
+
+```{r}
+rd_map_emp <- cbp_rd %>% 
+  filter(EMPSZES == 1) %>% 
+    mutate(NAICS2017_LABEL = str_remove(NAICS2017_LABEL, ".manufacturing")) %>% 
+    group_by(NAICS2017_LABEL, naics_3digit_label) %>%
+  reframe(emp_tot = sum(emp_tot)) %>% 
+    ggplot() + 
+    geom_col(aes(x = emp_tot/1000, y = reorder(NAICS2017_LABEL, emp_tot), fill = naics_3digit_label), color = "black") + 
+    scale_fill_manual(values = rd_map_col) + 
+    scale_y_discrete(labels = scales::label_wrap(50)) + 
+    theme_bw() + 
+    labs(x = "Total Number of Employees (Thousands)", y = "Input Output Manufacturing Label", fill = "3-Digit NAICS Label", title = "R&D Intesive Manufacturing Employment", subtitle = title_fun(cbp_rd, 1)) + 
+    theme(legend.position = "bottom")
+
+rd_map_emp + guides(fill = "none")
+```
+
+R&D intensive activity is distributed across only a few states. Most prominently, the large manufacturing employment centers in the Midwest disappear when focusing only on R&D intensive manufacturing. The R&D intensive manufacturing sectors that locate in the midwest tend to be in chemical manufacturing, medical device manufacturing, or computer and electronic product manufacturing. There is substantial aircraft in Connecticut, and pharmaceutical manufacturing in New Jersey. Across the rest of the north-east, R&D intensive manufacturing activity is concentrated in pharmaceuticals, surgical and medical equipment, semiconductor, wireless component, and other electronics component manufacturing.  
+
+```{r, fig.width=11,fig.height=8}
+
+rd_manf_map <- estab_size_circles_dynamic(gdp_manf_share, cbp_rd, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.5)
+
+rd_manf_map
+```
+
+In the southeast, the density of manufacturing establishments is far smaller than across all manufacturing industries, which is unsurprising given the large poultry manufacturing, furniture, rug mills, and ship-building clusters in this region. In Georgia, we see Gulfstream Aerospace Corporation in aircraft manufacturing. Interestingly, there remains a high density of relatively heterogeneous manufacturing activity in Florida. We see a few regional large establishments in pharmaceuticals, broadcast and wireless communications equipment, surgical and medical instrument manufacturing. However, there are a number of much smaller establishments across a variety of computer and electronics manufacturing sub-sectors. There is an interesting regionality to Florida as well. Louisiana is notably sparse in R&D intensive manufacturing, and the manufacturing cluster around machinery manufacturing and other industries around Houston notably disappears. Austin's semiconductor manufacturing and Dallas' aircraft manufacturing cluster stand out in Texas. Aircraft manufacturing persists in Kansas, Southern California, and Washington, and space propulsion manufacturing in Arizona and Washington. Notably, space manufacturing does not make up for a large portion of employment, while there is a large employment presence from semiconductor manufacturing establishments in Washington. A relatively dense and distributed cluster around Boulder Colorado persists, in addition to the surgical device, pharmaceutical and semiconductor manufacturing cluster in Salt Lake City. 
+
+In Southern California, outside of the aircraft manufacturing cluster, there remains substantial activity in dental laboratories, surgical device manufacturing, a variety of computer and electronics manufacturing, and pharmaceutical manufacturing. In northern California there is a large pharmaceutical and surgical device manufacturing cluster, along with a variety of computer and electronics manufacturing sub-sectors. Every state has at least one R&D intensive manufacturing sub-sector; however, some states appear to support a higher density of R&D intensive manufacturing sub-sectors than others. Regionally, the R&D intensive manufacturing sub-sectors are not always the same sectors that dominate employment and manufacturing activity (e.g. in the Midwest), and in other regions, such as Florida, the density as well as the heterogeneity in manufacturing activity appears to persist.
+
+## Regional Variation in R&D Activity 
+
+At this point, it is worthwhile to benchmark the share of manufacturing employment in R&D intensive subsectors against total employment in the region. 
+
+```{r}
+#Import County Totals Data
+cbp_all <- read.csv(here("County Data/total_naics_2019.csv")) %>% 
+  filter(EMPSZES_LABEL == "All establishments") %>% 
+  mutate(all_estabs = as.numeric(gsub('[[:punct:] ]+','', ESTAB)), all_emp = as.numeric(gsub('[[:punct:] ]+','', EMP))) %>% 
+  left_join(cbp_geoid, .) %>% 
+  select(-c(ESTAB, EMP, PAYANN, NAICS2017_LABEL, EMPSZES_LABEL))
+```
+
+
+```{r}
+county_rd_col <- get_col_match(cbp_rd %>% left_join(cbp_all), 1)
+
+#Get County Totals for R&D Intensive Manufacturing Regions
+county_rd_sum <- cbp_rd %>% 
+  left_join(cbp_all) %>% 
+  mutate(rd_manf_share_emp = emp_tot / all_emp, 
+         rd_manf_share_estabs = ESTAB / all_estabs, 
+         ind_label = case_when(rd_manf_share_emp > .04 | rd_manf_share_estabs > 0.004 ~ paste(ind_desc, NAME, sep = "\n"))) %>% 
+  mutate(across(.cols = c(rd_manf_share_emp, rd_manf_share_estabs), ~ clean_perc(.)/100)) %>%
+  ggplot(aes(x = rd_manf_share_estabs, y = rd_manf_share_emp, fill = naics_3digit_label, text = ind_desc, label = NAME)) + 
+  geom_point(aes(), shape = 21) + 
+  scale_fill_manual(values = county_rd_col) + 
+  scale_x_continuous(labels = scales::percent) + 
+  scale_y_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Intensive Manufacturing \nShare of County Establishments", y = "R&D Intensive Manufacturing \nShare of County Employment") + 
+  theme_bw() + 
+  axis_theme
+```
+
+R&D intensive manufacturing activity makes up for a large percentage of employment in certain counties, such the 13% of employment aircraft manufacturing accounts for in Snohomish County Washington, or the 28% of employment pharmaceutical manufacturing accounts for Barceloneta Minicipio Puerto Rico. R&D intensive manufacturing activity makes up for a relatively larger share of employment than establishments, and dental laboratories/surgical & medical instruments manufacturing across Indiana, New York, Arkansas, Virginia, Oregon, Nebraska and Louisiana make up for a relatively large share of total employment and or establishments. 
+
+```{r, fig.width=9,fig.height=6}
+ggplotly(county_rd_sum)
+```
+
+## STATE Level Variation in R&D Intensive Manufacturing
+
+There is also substantial heterogeneity in the composition of R&D manufacturing activity at the state level. 
+
+```{r}
+cbp_state <- read.csv(here("County Data/state_total_2019.csv")) %>% 
+  filter(EMPSZES == 1, LFO == 1) %>% 
+  select(area_title = NAME, ESTAB, EMP) %>%
+  mutate(tot_estabs = as.numeric(gsub('[[:punct:] ]+','', ESTAB)), tot_emp = as.numeric(gsub('[[:punct:] ]+','', EMP))) %>% 
+  filter(str_detect(area_title, "Guam|Mariana|Virgin Islands|Samoa", negate = TRUE))
+```
+
+
+```{r}
+manf_rd_states <- cbp_rd %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5)) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  as_tibble() %>% 
+  group_by(ind_desc, naics_3digit_label, state_abbr, st) %>% 
+  reframe(rd_estabs = sum(ESTAB), rd_emp = sum(emp_tot)) %>%
+  left_join(area_codes %>% select(state_abbr, area_title)) %>% 
+  left_join(cbp_state %>% select(area_title, tot_estabs, tot_emp)) %>% 
+  mutate(rd_state_estabs = rd_estabs / tot_estabs, rd_state_emp = rd_emp / tot_emp) 
+```
+
+At the state level, R&D intensive manufacturing establishments make up less than .3% of total establishments. While California unsurprisingly has the highest share of R&D intensive manufacturing establishments, the three states preceding it are Utah, New Hampshire, Massachusetts, and Arizona. Dental laboratories make up for a large percentage of the total R&D intensive manufacturing establishments. 
+
+```{r}
+state_estabs <- manf_rd_states %>% 
+  group_by(state_abbr) %>% 
+  mutate(total_rd_estabs = sum(rd_estabs), 
+         total_rd_share = total_rd_estabs/tot_estabs) %>% 
+  ggplot(aes(x = rd_state_estabs, y = reorder(state_abbr, total_rd_share), fill = naics_3digit_label, group = ind_desc)) + 
+  geom_col(aes(), color = "black") + 
+  scale_fill_manual(values = county_rd_col) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Intensive Manufacturing Share of State Establishments", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+state_estabs
+```
+
+R&D intensive manufacturing employment accounts for more than 2% of total employment in Washington, and aircraft manufacturing is a substantial employeer across Washington, Connecticut and Kansas. Semiconductor manufacturing in Idaho, Vermont, and Oregon also makes up for a large share of total employment. 
+
+```{r}
+state_employment <- manf_rd_states %>% 
+  group_by(state_abbr) %>% 
+  mutate(total_rd_emp = sum(rd_emp), 
+         total_rd_share = total_rd_emp/tot_emp) %>% 
+  ggplot(aes(x = rd_state_emp, y = reorder(state_abbr, total_rd_share), fill = naics_3digit_label, group = ind_desc)) + 
+  geom_col(aes(), color = "black") + 
+  scale_fill_manual(values = county_rd_col) + 
+  scale_x_continuous(labels = scales::percent) + 
+  guides(fill = "none") + 
+  labs(x = "R&D Intensive Manufacturing Share of State Employment", y = "") + 
+  theme_bw() + 
+  axis_theme
+
+state_employment
+```
+
+The sectoral and regional density and diversity of R&D intensive manufacturing is also highly heterogeneous. I explore the use of two different measures of diversity/concentration: the shannon-weiner diversity index (log(p_share)*p_share) and the Herfindahl-Hirschman index (sum of p_share^2)) for both employment and establishments. Because I am primarily interested in the diversity of geograpies and industries involved in R&D intensive manufacturing, I focus primarily on the Shannon -Weiner diversity index.^[The HHI index is a measure of competition and market concentration. Because we do not know how industries might compete or collaborate together, this measure might not make the most sense.]Counties themselves vary substantially in the diversity of industries that they support. 
+
+```{r}
+# We invert the shannon diversity index so that lower measures indicate less diversity and higher values indicate more diversity. 
+shannon_fn <- function(count_var, var){
+   1 - if_else(
+     {{ count_var }} == 1, 1, 
+     (-sum(log({{ var }})*{{ var }}, na.rm = TRUE)) / log({{ count_var }})
+   )
+}
+
+hhi_fn <- function(var){
+  sum({{ var }}**2, na.rm = TRUE)
+}
+```
+
+
+```{r}
+county_diversity <- cbp_rd %>%
+  left_join(cbp_all) %>% 
+  mutate(ind_prop_estab = ESTAB / all_estabs, #industry*county proportion of estabs
+         ind_prop_emp = emp_tot / all_emp) %>%  #industry*county proportion of emp
+  group_by(GEO_ID) %>% 
+  reframe(county_rd_ind = n(), # of counties involved in R&D intensive manf
+          county_rd_total_estabs = sum(ESTAB), # county count of R&D intensive estabs
+          county_rd_total_emp = sum(emp_tot), # county count of R&D intensive emp
+          county_shannon_estab = shannon_fn(county_rd_ind, ind_prop_estab), # county shannon-weiner diversity index estabs
+          county_shannon_emp = shannon_fn(county_rd_ind, ind_prop_emp),
+          county_hhi_estab = hhi_fn(ind_prop_estab), # county HHI estabs
+          county_hhi_emp = hhi_fn(ind_prop_emp), # county hhi emp
+          all_estabs, all_emp)%>% 
+  ungroup() %>% 
+  distinct() %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5), 
+         county_prop_estab = county_rd_total_estabs/all_estabs,
+         county_prop_emp = county_rd_total_emp / all_emp) %>% 
+  left_join(cbp_geoid) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  as_tibble()
+```
+
+At the county level, employment and establishment diversity do not appear to be correlated, with either measure of diversity/concentration, and the two different measures of diversity/concentration appear to be roughly linearly correlated (e.g. high concentration HHI counties are also less diverse Shannon Index Counties). 
+
+Across both indicies, highly concentrated counties are also the counties with the largest share of total county employment (e.g. Snohomish County, WA, Monroe County, IN; Chatam County, GA; and Washington County Oregon)
+
+```{r}
+county_div_emp <- county_diversity %>% 
+  select(NAME, GEO_ID, county_shannon_estab, county_shannon_emp, county_prop_estab, county_prop_emp, all_estabs, all_emp, county_hhi_emp, county_hhi_estab) %>% 
+  filter(county_shannon_emp != 0 | county_shannon_estab != 0) %>% 
+  distinct() %>% 
+  ggplot(aes(tex = NAME)) + 
+  geom_point(aes(x = county_prop_emp, y = -county_shannon_emp), color = "blue") + 
+  geom_point(aes(x = county_prop_emp, y = county_hhi_emp*100))
+```
+
+There is a less tight correlation between the county proportion of total establishments and the diversity/concentration of R&D intensive manufacturing establishments. For example, Santa Clara, CA has high diversity and low concentration, as well as a high percentage share of total county establishments. Middlsex County, MA; as well as Orange County, CA; Boulder County, CO, Alameda County CA, and Hillsborough County, New Hampshire are also all relatively diverse counties with relatively high share of total establishments. 
+
+```{r}
+county_div_estab <- county_diversity %>% 
+  select(NAME, GEO_ID, county_shannon_estab, county_shannon_emp, county_prop_estab, county_prop_emp, all_estabs, all_emp, county_hhi_emp, county_hhi_estab) %>% 
+  filter(county_shannon_emp != 0 | county_shannon_estab != 0) %>% 
+  distinct() %>% 
+  ggplot(aes(tex = NAME)) + 
+  geom_point(aes(x = county_prop_estab, y = -county_shannon_emp), color = "blue") + 
+  geom_point(aes(x = county_prop_estab, y = county_hhi_emp*100))
+```
+
+
+```{r}
+#define a dataframe to measure geographic diversity. 
+
+state_diversity_geog <- county_diversity %>% 
+  group_by(state_abbr, st) %>% 
+  reframe(county_rd = n(),
+    state_shannon_estab = shannon_fn(county_rd, county_prop_estab), # county shannon-weiner diversity index estabs
+          state_shannon_emp = shannon_fn(county_rd, county_prop_emp),
+          state_hhi_estab = hhi_fn(county_prop_estab), # county HHI estabs
+          state_hhi_emp = hhi_fn(county_prop_emp), 
+          mean_county_shannon_estab = mean(county_shannon_estab, na.rm = TRUE),
+          mean_county_shannon_emp = mean(county_shannon_emp, na.rm = TRUE), 
+          mean_county_hhi_estab = mean(county_hhi_estab, na.rm = TRUE), 
+          mean_county_hhi_emp = mean(county_hhi_emp, na.rm = TRUE)
+          )
+  
+  
+  
+```
+
+```{r}
+quad_cols <- brewer.pal(8, "Accent") %>% tail(4)
+```
+
+States with a larger share of manufacturing employment seem to be slightly less geographically diverse (e.g. Indiana, Wisconsin, Iowa, Alabama) than states with a lower share of manufacturing employment. 
+
+```{r}
+#county-level distribution of shannon index
+county_sum <- county_diversity %>% 
+  left_join(state_quads %>% select(-c(area_fips))) %>% 
+  group_by(state_abbr) %>% 
+  mutate( mean_county_shannon_estab = mean(county_shannon_estab, na.rm = TRUE),
+          mean_county_shannon_emp = mean(county_shannon_emp, na.rm = TRUE), 
+          mean_county_hhi_estab = mean(county_hhi_estab, na.rm = TRUE), 
+          mean_county_hhi_emp = mean(county_hhi_emp, na.rm = TRUE)
+          ) %>% 
+  ggplot() + 
+  geom_density_ridges(aes(x = county_shannon_emp, y = reorder(state_abbr, manf_emp_share), fill = mean_county_shannon_emp), color = "black", alpha = 0.85) + 
+  scale_fill_distiller(palette = "Spectral") + 
+  guides(fill = "none") + 
+  labs(x = "County-Level Shannon Diversity Index, Employment", y = "") + 
+  theme_bw()
+```
+
+
+```{r}
+ind_diversity <- manf_rd_states %>% 
+  group_by(state_abbr) %>% 
+  reframe(ind_rd_count = n(), 
+    ind_shannon_estab = shannon_fn(ind_rd_count, rd_state_estabs),
+    ind_shannon_emp = shannon_fn(ind_rd_count, rd_state_emp),
+          ind_hhi_estab = hhi_fn(rd_state_estabs), # county HHI estabs
+          ind_hhi_emp = hhi_fn(rd_state_emp))
+```
+
+```{r}
+ind_diversity %>% 
+  left_join(state_quads %>% select(-c(area_fips))) %>% 
+  ggplot() + 
+  geom_point(aes(x = ind_shannon_emp, y = reorder(state_abbr, manf_emp_share)), color = "black", alpha = 0.85) + 
+  guides(fill = "none") + 
+  labs(x = "County-Level Shannon Diversity Index, Employment", y = "") + 
+  theme_bw()
+```
+
+
+However, the geographical and industrial concentration of R&D activity by states varies substantially. Some states, such as Hawaii, Alaska, and Wyoming only see R&D intensive manufacturing activity in one geography and one industry (dental laboratories in the main county). Other states, such as Arkansas, West Virginia, South Dakota, and North Dakota only see R&D intensive manufacturing in 1 industry (dental laboratories), but spread across multiple geographies. Other states, such as Vermont, Rhode Island, and Delaware only see R&D intensive manufacturing in one geography, but distributed across multiple industries. For other states, these industrial and geographic diversity are roughly linearly correlated. Utah, California, and New Hampshire stand out as particularly high industry diversity states. In general, more states see diversity in industries, rather than geographies. 
+
+```{r}
+hhi_graph <- state_diversity_geog %>%
+    left_join(ind_diversity) %>% 
+    left_join(state_quads) %>%
+  filter(ind_shannon_estab > 0) %>% 
+    ggplot() + 
+    geom_text_repel(aes(x = ind_hhi_estab, state_hhi_estab, label = state_abbr, color = state_quadrant), max.overlaps = 50) + 
+    scale_color_brewer(palette = "Set1")
+```
+
+
+```{r}
+ind_geo_graph0 <- state_diversity_geog %>%
+  left_join(ind_diversity) %>% 
+  left_join(state_quads) %>%
+  ggplot() + 
+  geom_text_repel(aes(x = ind_shannon_emp, state_shannon_emp, label = state_abbr, color = state_quadrant)) + 
+  scale_color_brewer(palette = "Set1")
+```
+
+
+```{r}
+ind_geo_graph1 <- state_diversity_geog %>%
+  left_join(ind_diversity) %>% 
+  left_join(state_quads) %>%
+  filter(ind_shannon_emp > 0) %>% 
+  ggplot() + 
+  geom_text_repel(aes(x = ind_shannon_emp, state_shannon_emp, label = state_abbr, color = state_quadrant)) + 
+  scale_color_brewer(palette = "Set1")
+```
+
+
+# SIZE 
+
+I conclude my analysis by considering how R&D intensive manufacturing activity is distributed across firms of different sizes, and how this distribution compares against that for all manufacturing. 
+
+1. Distribution of size across sectors
+2. Distribution of firm size across geographies? (Do we have the data to do this? Maybe skip)
+
+I begin by considering the distribution of R&D intensive manufacturing activity across sectors at the national level. Unsurprisingly, dental laboratories are dominated by small establishments. Certain industries do not have any establishments with more than 500 employees (capacitor, resistor, coil transformer, and other inductor manufacturing; other communications equipment manufacturing; telephone apparatus; totalizing fluid meter; computer storage device; military armored vehicle, tank and tank component; and other guided missile and space part manufacturing). Other industries, such as guided missile and space vehicle propulsion have no establishments below 20 employees. Some industries see large concentrations of activity in establishments with between 50 and 250 employees, but overall, the distribution of R&D intensive manufacturing activity across establishments of different sizes is quite heterogeneous. 
+
+```{r}
+cbp_rd_size <- read.csv(here("County Data/6_digit_national_estab_size.csv")) %>% 
+  filter(LFO == 1) %>% 
+  filter(NAICS2017 %in% rd_codes)
+```
+
+```{r}
+rd_size_graph <- cbp_rd_size %>% 
+  filter(EMPSZES != 1) %>% 
+  group_by(NAICS2017_LABEL) %>% 
+  mutate(tot_estab = sum(ESTAB), 
+         estab_share = ESTAB / tot_estab) %>% 
+  ggplot() + 
+  geom_col(aes(x = estab_share, y = reorder(NAICS2017_LABEL, tot_estab), fill = reorder(EMPSZES_LABEL, EMPSZES)), color = "black") +
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Share of All Establishments", y = "R&D Intensive Manufacturing Sub-Sector", fill = "") + 
+  theme_bw() + 
+  axis_theme
+
+rd_size_graph
+  
+```
+
+I then examine the geographic distribution of R&D intensive manufacturing activity by establishment size. Not ever state has large R&D manufacturing establishments. (Theory: Not all states are anchor-tenant type places)
+
+```{r}
+#Because of data suppression, not all establishments are accounted for without looking at all establishments. We thus need to apply a minor fix to our data. We take the data for which we dont have entries without looking at all establishments, and then create a an estimate for what we think is going on in this sector. 
+
+rd_estab_sizes_fix <- cbp_io_final %>% 
+  filter(NAICS2017 %in% rd_codes) %>% 
+  group_by(NAME, NAICS2017) %>% 
+  mutate(emp_count = n()) %>% 
+  filter(EMPSZES == 1 & emp_count == 1) %>% 
+  select(-c(EMPSZES, EMPSZES_LABEL)) %>% 
+  mutate(emp_diff = emp_num/ESTAB,
+    EMPSZES = case_when(
+  emp_diff > 0 & emp_diff < 5 ~ 210, 
+  emp_diff >= 5 & emp_diff < 10 ~ 220,
+  emp_diff >= 10 & emp_diff < 20 ~ 230,
+  emp_diff >= 20 & emp_diff < 50 ~ 241,
+  emp_diff >= 50 & emp_diff < 100 ~ 242,
+  emp_diff >= 100 & emp_diff < 250 ~ 251,
+  emp_diff >= 250 & emp_diff < 500 ~ 252,
+  emp_diff >= 500 & emp_diff < 1000 ~ 254,
+  emp_diff >= 1000 ~ 260), 
+  emp_tot = emp_diff,
+  emp_all = emp_num) %>% 
+  left_join(cbp_empzes)
+```
+
+```{r}
+#Final size R&D geography data 
+rd_size_geo <- cbp_io_final %>% 
+  filter(NAICS2017 %in% rd_codes, EMPSZES != 1) %>% 
+  bind_rows(rd_estab_sizes_fix) %>% 
+  group_by(state_abbr, EMPSZES_LABEL, EMPSZES) %>% 
+  reframe(tot_estabs = sum(ESTAB)) %>% 
+  ungroup()
+```
+
+
+```{r}
+rd_size_geo_graph <- rd_size_geo %>% 
+  filter(!is.na(state_abbr)) %>% 
+  group_by(state_abbr) %>% 
+  mutate(tot_estab = sum(tot_estabs), 
+         estab_share = tot_estabs / tot_estab) %>% 
+  ggplot() + 
+  geom_col(aes(x = estab_share, y = reorder(state_abbr, tot_estab), fill = reorder(EMPSZES_LABEL, EMPSZES)), color = "black") +
+  scale_fill_brewer(palette = "Paired") + 
+  labs(x = "Share of All R&D Intensive Manufacturing Establishments", y = "", fill = "") + 
+  theme_bw() + 
+  axis_theme 
+```
+
+
+
+# The location of scientific R&D activity
+
+Scientific R&D is especially concentrated in southern and northern California, and has a large cluster of activity in New Mexico, as well as along the east coast and the mid-west. The location of scientific R&D establishments is slightly offset from the location of large manufacturing centers, and appears especially sparse in the southwest, the southern mid-western states (e.g Missouri), and in Texas. 
+
+```{r}
+rd_all <- read.csv(here("County Data/rd_2019.csv")) %>% 
+  mutate(emp_tot = as.numeric(gsub('[[:punct:] ]+','', EMP)), 
+         naics_3digit_label = "Scientific R&D") %>%  
+         emp_estimate() %>% 
+  filter(EMPSZES == 1)
+```
+
+```{r, fig.width=11,fig.height=8}
+rd_comp_all <- estab_size_circles_dynamic(all_manf_map, rd_all, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .5, color_opac = 0.5)
+
+rd_comp_all
+
+```
+
+R&D intensive manufacturing in particular, appears to co-locate with R&D intensive manufacturing in certain states, but not others. In California and across the east-coast, the density of scientific R&D and R&D intensive manufacturing establishments is very high. However, across the southesast, and into Florida, there are far fewer scientific R&D establishments. In the northern midwest, scientific R&D generally follows R&D intensive manufacturing, but is absent from the southern midwest. In texas, scientific R&D is located in Houston and Austin, while R&D intensive manufacturing is in Dallas. In northwest in Washington, R&D activity does appear to follow the R&D intensive manufacturing clusters in this region (e.g in Washington), but the semiconductor manufacturing clusters in this area appear to be slighly separate from the location of scientific R&D activity.    
+
+
+```{r, fig.width=11,fig.height=8}
+rd_comp <- estab_size_circles_dynamic(rd_manf_map, rd_all, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .5, color_opac = 0.5)
+
+rd_comp
+
+```
+
+Some questions to think about: 
+- What percentage of state employment/gdp occurs in R&D intensive industries? 
+Are there any states where employment/gdp makes up a higher percent of state activity than others? 
+- What percentage of county employment/gdp occurs in R&D intensive industries 
+Are there any counties where employment/gdp makes up a higher percent of county activity than others? 
