@@ -195,7 +195,7 @@ agg_ind %>% select(1:2)
 
 ### Create Aggregate Measures
 
-Because of the way that these databases are constructred, the agg_ind dataframe above refers to commodity level summaries, while the agg_com dataframe above refers to industry level summaries. We spend some time at the moment to create some commodity and industry level benchmarks. 
+Because of the way that these databases are constructed, the agg_ind dataframe above refers to commodity level summaries, while the agg_com dataframe above refers to industry level summaries. We spend some time at the moment to create some commodity and industry level benchmarks. 
 
 ```{r}
 agg_coms %>% 
@@ -1316,7 +1316,7 @@ rd_in_comp
 ```
 
 ```{r, fig.width=18,fig.height=12}
-ggplotly(rd_out_comp)
+ggplotly(rd_in_comp)
 ```
 
 ```{r}
