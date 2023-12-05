@@ -1061,44 +1061,6 @@ cluster_assignments <- readRDS(here("Input Output Data/cluster_assignments.RDS")
 ```
 
 
-```{r}
-#Final Mapping function (dynamic scaling with number of employees)
-estab_size_circles_inputs <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
-  
-  map_data <- data %>% 
-    filter(EMPSZES == condition) %>% 
-    county_join() %>% 
-    arrange(naics_3digit_label) %>% 
-    st_jitter(factor = rad/6781193) %>% 
-    mutate(scale_emp = 10*emp_tot)#0.01106
-  
-  #col_list <- get_col_match(data, condition)
-  
-  col_fun <- colorFactor(h_cols, map_data$h_clusters)
-  
-  popup_label = label_2(map_data, {{ var }})
-  
-  map %>% 
-    addCircles(data = map_data,
-                   radius = map_data$scale_emp, 
-                   color = "black",
-                  weight = 2,
-                   fillColor = ~col_fun(naics_3digit_label), 
-                   opacity = color_opac, 
-                   fillOpacity = fill_opac,
-                    label = popup_label,
-                    labelOptions = labelOptions(
-                      style = list("font-weight" = "normal", padding = "3px 8px"),
-                      textsize = "15px",
-                      direction = "auto")) %>% 
-    addResetMapButton()
-}
-```
-
-```{r}
-input_manf <- estab_size_circles_inputs(gdp_manf_share, cbp_2019, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
-```
-
 
 The location of manufacturing activity varies substantially by geography, and is dominated by specific large manufacturing clusters across chemical, computer and electronic, medical, and transportation equipment manufacturing. However, how does the geographic distribution of manufacturing activity change if only R&D intensive manufacturing sub-sectors are considered? 
 
@@ -1199,6 +1161,53 @@ cbp_io <- cbp_holder %>%
 ```
 
 
+
+```{r}
+#Final Mapping function (dynamic scaling with number of employees)
+estab_size_circles_inputs <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) %>% 
+    mutate(scale_emp = 10*emp_tot)#0.01106
+  
+  #col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(h_cols, map_data$h_clusters)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircles(data = map_data,
+                   radius = map_data$scale_emp, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(h_clusters), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                    label = popup_label,
+                    labelOptions = labelOptions(
+                      style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "15px",
+                      direction = "auto")) %>% 
+    addResetMapButton()
+}
+```
+
+```{r}
+cbp_2019 %>% left_join(cbp_io) %>% left_join(cluster_assignments) %>% view()
+```
+
+
+```{r}
+input_manf <- estab_size_circles_inputs(gdp_manf_share, cbp_2019, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
+```
+
+
+
+
 ```{r}
 #With this crosswalk, we can identify manufacturing sub-sectors that we have input-output data for, and join these back to our original CBP data frame
 rd_final <- manf_rd_use %>% 
@@ -1224,6 +1233,50 @@ rd_codes <- rd_final %>%
 cbp_io_final <- rd_final %>%
   select(-c(naics_3digit_label, NAICS2017)) %>% 
   left_join(cbp_2019, .)
+```
+
+```{r}
+cbp_io_final %>% 
+```
+
+
+
+```{r}
+#Final Mapping function (dynamic scaling with number of employees)
+estab_size_circles_inputs <- function(map, data, condition, var, rad, fill_opac, color_opac = 1, border_size = 2){
+  
+  map_data <- data %>% 
+    filter(EMPSZES == condition) %>% 
+    county_join() %>% 
+    arrange(naics_3digit_label) %>% 
+    st_jitter(factor = rad/6781193) %>% 
+    mutate(scale_emp = 10*emp_tot)#0.01106
+  
+  #col_list <- get_col_match(data, condition)
+  
+  col_fun <- colorFactor(h_cols, map_data$h_clusters)
+  
+  popup_label = label_2(map_data, {{ var }})
+  
+  map %>% 
+    addCircles(data = map_data,
+                   radius = map_data$scale_emp, 
+                   color = "black",
+                  weight = 2,
+                   fillColor = ~col_fun(naics_3digit_label), 
+                   opacity = color_opac, 
+                   fillOpacity = fill_opac,
+                    label = popup_label,
+                    labelOptions = labelOptions(
+                      style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "15px",
+                      direction = "auto")) %>% 
+    addResetMapButton()
+}
+```
+
+```{r}
+input_manf <- estab_size_circles_inputs(gdp_manf_share, cbp_2019, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
 ```
 
 
