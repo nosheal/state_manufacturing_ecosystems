@@ -318,6 +318,18 @@ manf_inputs <- use_table_final %>%
   arrange(industry_code)
 ```
 
+```{r}
+ind_crosswalk <- manf_inputs %>% 
+  ungroup() %>% 
+  select(industry_code, industry_desc, naics_3digit, naics_3digit_label) %>% 
+  distinct()
+```
+
+```{r}
+saveRDS(ind_crosswalk, here("Input Output Data/ind_crosswalk.RDS"))
+```
+
+
 
 ```{r}
 com_list <- manf_inputs %>% 
@@ -442,16 +454,6 @@ Of these 109 inputs, 73 are in the manufacturing sector make table.
 supplied_commodities <- com_code_list[com_list_sup]
 ```
 
-I then get the commodity normalization factor for each of these commodities. 
-
-```{r}
- lambda_inputs <- lambda_c %>% 
-    filter(commodity_code %in% supplied_commodities) %>% 
-    select(com_share) %>% 
-    unlist() %>% 
-    unname() %>% 
-     t()
-```
 
 Certain commodities, such as custom computer programming are used far less intensively as an intermediate output than others are across all products (e.g. Asphalt paving and concrete mix). $\lambda_c$ accounts for the share of value that intermediate inputs account for, relative to the total value of that commodity.
 
@@ -606,14 +608,17 @@ output_result <- result_matrix[ind_index,]
 This process must be performed over all industries $i$. Fortunately, the above process covers all possible $j$ for a given industry $i$. I define a function to capture the above process, iterate through every $i$ in the dataset. The output is a final matrix $M_{i,j}$, where each row represents a vector of the industries that supply $i$, and each column represents the vector of industries that are supplied by $i$, populated by a measure of the intensity of supply. In addition, I output a long-formatted dataframe indexing the top 3-most correlated industries in terms of use of similar inputs, for each industry $i$. 
 
 ```{r}
-input_correlated_industries <- ind_cor_out[0,]
+input_correlated_ind <- ind_cor_out[0,]
+```
+
+```{r}
+mat_holder <- matrix(0, 232, 232)
 ```
 
 
 
-
 ```{r}
-get_industry_outputs <- function(industry){ 
+get_input_results <- function(industry){ 
   
   #Get List of Inputs for a specific industry I 
   input_list <- manf_inputs %>% 
@@ -626,49 +631,138 @@ get_industry_outputs <- function(industry){
   #Match the commodity codes to the index of commodity codes we have (supply)
   com_list_sup <- which(com_code_list %in% input_list) %>% 
     unlist() %>% 
-    unname() 
+    unname()
   
-   lambda_inputs <- lambda_c %>% 
-    filter(commodity_code %in% com_code_list[com_list_sup]) %>% 
-    select(com_share) %>% 
-    unlist() %>% 
-    unname() 
+  #Get the list of supplied commodities
+  supplied_commodities <- com_code_list[com_list_sup]
   
-  #Select the appropriate columns form our dataset, result is a 232 * X dataset, where X is the number of commodities that that are output by the set of industries being considered. Consider the semiconductor manufacturing sector. This sector uses 109 different inputs. However, only only 73 of the 109 inputs are produced by other manufacturing sectors. At this point in the analysis, we are exclusively focusing on the manufacturing sector. This will be expanded later. 
+  #Get the lambda_c vector
+  lambda_inputs <- lambda_c %>% 
+      filter(commodity_code %in% supplied_commodities) %>% 
+      select(com_share) %>% 
+      unlist() %>% 
+      unname() 
   
-  #This results in an I,P matrix, the length being determined by the overlap between inputs demanded by I, and the production of all sample industries j. 
+  #From the matrix of outputs $Y_{P_i}$, extract the columns that correspond to the inputs used by industry $i$. 
+  output_matrix <- output_matrix_raw[, com_list_sup] %>% as.matrix()
   
-  output_matrix <- output_matrix_raw[, com_list_sup]
+  # Perform element wise multiplication across the rows to normalize by use of commodity as an input
+  com_adj <- output_matrix*lambda_inputs
   
-  #We adjust this by lambda_c at this point, multiplying across each column the corresponding column commodity correction. 
+  #Get Index for Supplied Commodities in Input Data
+  input_com_list <- which(com_list %in% supplied_commodities) 
   
-  com_adj <- output_matrix * lambda_inputs
+  #Get Index for Industry I 
+  ind_row <- which(ind_list %in% c(industry))
   
-  #At this point, we turn to our input data once more. The above matrix representation of X_ic provides us rows that identify industry use of commodities, and columns that identify the industries that use specific commodities. Again, we select the specific columns that match the commodity codes of inputs for a specific industry. 
-
-  #This also results in an I,P matrix, of the use of the inputs used by industry i across all other industries as well. 
-  input_test <- input_raw_matrix[, com_list_sup]
+  #From the matrix of inputs $X_{C_i}$, extract the input columns that correspond to the inputs used by a given industry I. 
+  input_results <- input_matrix[, input_com_list] %>% as.matrix()
   
-  #We can use matrix multiplication to multiple our input and our output matrices together. Here, we have to take the transpose of the output matrix. As such, we have an [i,p] input matrix, and a [p,j] output matrix, allowing us to construct an [i,j] input output matrix. 
-  
-  result_matrix <- input_test %*% t(output_matrix)
-  
-  #The resulting matrix is very complicated, but very interesting. For the row that corresponds to industry i, the matrix details the intensity of supply from other manufacturing sectors.
-  
-  
-  ind_result <- result_matrix[which(ind_list %in% c(industry)), ] 
-  
-  return(t(ind_result)) 
-  #However, every other row of the matrix details how each other industry j uses the same inputs as industry i, and how other industries supply this use of inputs. We might want to use this in the future, but at the moment, have no real use for it.
-  
+  return(input_results)
   }
 ```
+
+```{r}
+get_industry_outputs <- function(industry){
+  
+  #Get List of Inputs for a specific industry I 
+  input_list <- manf_inputs %>% 
+    filter(industry_code %in% c(industry), value_num > 0) %>% 
+    select(commodity_code) %>% 
+    unlist() %>% 
+    unname()
+  
+  
+  #Match the commodity codes to the index of commodity codes we have (supply)
+  com_list_sup <- which(com_code_list %in% input_list) %>% 
+    unlist() %>% 
+    unname()
+  
+  #Get the list of supplied commodities
+  supplied_commodities <- com_code_list[com_list_sup]
+  
+  #Get the lambda_c vector
+  lambda_inputs <- lambda_c %>% 
+      filter(commodity_code %in% supplied_commodities) %>% 
+      select(com_share) %>% 
+      unlist() %>% 
+      unname() 
+  
+  #From the matrix of outputs $Y_{P_i}$, extract the columns that correspond to the inputs used by industry $i$. 
+  output_matrix <- output_matrix_raw[, com_list_sup] %>% as.matrix()
+  
+  # Perform element wise multiplication across the rows to normalize by use of commodity as an input
+  com_adj <- output_matrix*lambda_inputs
+  
+  #Get Index for Supplied Commodities in Input Data
+  input_com_list <- which(com_list %in% supplied_commodities) 
+  
+  #Get Index for Industry I 
+  ind_row <- which(ind_list %in% c(industry))
+  
+  #From the matrix of inputs $X_{C_i}$, extract the input columns that correspond to the inputs used by a given industry I. 
+  input_results <- input_matrix[, input_com_list] %>% as.matrix()
+  
+  #Results matrix
+  result_matrix <- input_results %*% t(output_matrix) 
+
+  #Final output
+  result_matrix[ind_index,] 
+}
+```
+
+
+
+```{r}
+get_correlated_industries <- function(industry, inputs){
+  
+  input_results <- inputs
+  #Get Row Sums for each industry (total value of intermediate inputs by manufacturing industries that supply i)
+  input_sums <- input_results %>% rowSums()
+  
+   #get related industries dataframe
+  related_ind <- data.frame(input_results) %>% 
+  mutate(ind_i = ind_list,
+    row_sums = input_sums) %>% 
+  select(row_sums, ind_i, everything())
+  
+  #Transform to matrix
+  rel_ind <- related_ind %>% 
+    filter(row_sums > .4) %>% 
+    mutate(ind_order = seq(n())) %>% 
+    select(ind_i, ind_order) 
+  
+  rel_ind_matrix <- related_ind %>% 
+    filter(row_sums > .4) %>% 
+    select(-c(row_sums, ind_i)) %>% 
+    as.matrix()
+  
+  #Get Correlation across industries
+  ind_cor <- as.dist(1-cor(t(rel_ind_matrix), method = c("pearson"))) %>% 
+    as.matrix()
+  
+  ind_cor_out <- ind_cor_df %>% 
+    arrange(desc(industry_cor)) %>% 
+    mutate(tal = seq(n())) %>% 
+    filter(tal < 4) %>% 
+    select(industry_code, industry_desc, naics_3digit_label, industry_cor) %>% 
+    mutate(industry_i = industry) 
+  
+  return(ind_cor_out)
+}
+```
+
 
 
 ```{r}
 for (i in 1:length(ind_list)){
   
-  mat_holder[, i] <- get_input_list(as.character(ind_list[i]))
+  indstry <- as.character(ind_list[i])
+  
+  mat_holder[i, ] <- get_industry_outputs(indstry)
+  
+  input_correlated_ind <- bind_rows(input_correlated_ind,
+                                    get_correlated_industries(indstry,                                                        get_input_results(indstry)))
   
 }
 ```
@@ -685,96 +779,45 @@ results_long <- results_df %>%
   pivot_longer( col = -c(industry_i), names_to = "industry_j", values_to = "m_ij")
 ```
 
-
 ```{r}
-ind_crosswalk <- manf_inputs %>% 
-  ungroup() %>% 
-  select(industry_code, industry_desc, naics_3digit, naics_3digit_label) %>% 
-  distinct()
-```
-
-```{r}
-results_long %>% 
-  filter(m_ij > 0 ) %>% 
-  rename(industry_code = industry_i) %>% 
-  left_join(ind_crosswalk) %>% 
-  left_join(ind_crosswalk %>% select(industry_j = industry_code, ind_j = industry_desc)) %>% view()
+saveRDS(results_long, here("Input Output Data/results_matrix.RDS"))
+saveRDS(input_correlated_ind, here("Input Output Data/ind_corr.RDS"))
 ```
 
 
-```{r}
-)
-  ggplot(aes(x = log(m_ij), y = naics_3digit_label, fill = naics_3digit_label)) + 
-  geom_density_ridges(aes(), alpha = 0.7, jittered_points = TRUE, point_alpha=1,point_shape=21) + 
-  scale_fill_manual(values = emp_ind_vector) + 
-  guides(fill = "none")
-```
+At the conclusion of this analysis, the input-output tables yield 3 separate measures of how industries are related: 
+
+1. $r(x_{i,c}, x_{j,c})$: measures the degree to which industries $i$ and $j$ use the same input mix. This measure captures vertical agglomeration. 
+
+2. $r(y_{i,p}, y_{j,p})$: measures the degree to which industries $i$ and $j$ produce the same output mix, highly correlated with NAICS. This measure captures horizontal agglomeration
+
+3. $r(m_{i,j}, m_{j,i})$ measures the degree to which industries $i$ and $j$ source inputs from similar sets of suppliers. This measures is an improved measure of vertical agglomeration from (1). 
 
 
-# Geographic work from here on
+# From Industries to Geographies
+
+Using the above constructed Input Output Data, I now map the use and supply of commodities by the manufacturing sector to county-level establishments details. The geographic distribution of manufacturing activity is heterogeneous and sparse. Defining the use or supply of a given vector of commodities by industries located in a county requires some measure of the absolute and relative intensity of county-level industrial activity. Following in Delgado et. al, 2014, I use employment and establishments as the main measure of county-level industrial activity. This analysis could easily be extended to use GDP or sales as a measure. 
+
+## Theoretical Background 
+
+The sparse geographic location of 6-digit level manufacturing establishments allows for a careful investigation of the use and supply of commodities by the manufacturing sector. Let $m$ be the total number of manufacturing sub-sectors, and $n$ be the total number of counties across the nation. For each county $g$ and manufacturing sub-sector $i$, let $\phi_{g, i}$ be the share of national sub-sector activity in that county. This measure captures the total concentration of sub-sector activity that occurs in a specific county:
+
+$$\phi_{i,g} = \frac{i_g}{\sum_{i=1}^m i}$$
+This measure needs to be modified to account for skews in concentration of certain industries in certain geographies. Fortunately, the location quotient for an industry provides for a standard and useful correction here. The location quotient is defined as the county's share of a specific industry, divided by the average county share for that industry across the nation:
+
+$$LQ_{g,i} = \frac{\phi_{i,g}}{( \frac{1}{n} \sum_{g=1}^{n} \phi_{i,g})}$$
 
 
+Thus, a measure of industrial activity in a given county can be approximated by: 
 
-I normalize this measure with $\lambda_c$, the share of the value of the total output of commodity c that is used as an intermediate input.
+$$\tilde{A}_{g,i} = \phi_{i,g} * LQ_{g,i}$$ 
 
-$$\phi_{j,c} = \sum_{P_c \in C_i} Y_{j,p} * = \sum_{P_c \in C_i} \frac{p_j}{p_{tot}}$$
+The above Input-Output section maps industry activity to the production and use of specific vectors of commodities. As such, I do not need to specifically map individual industries to commodities. Instead, I estimate the relatedness between a specific manufacturing sub-sector $i_g$ and the manufacturing sub-sectors located within a specific distance from that sub-sector as a function of that county's industrial activity in a given sub-sector, $\tilde{A}_{g,i}$, and the derived input-output measure of the relatedness between geographically differentiated manufacturing sub-sectors $i_g$ and $j_g$, for all $j_g$ within a specific radius of the county of interest (let the set of these counties and industries be given by $\theta$). 
 
-For all commodities $P_c$ in $C_i$, the set of commodities that industry $i$ uses as intermediate inputs, 
+$$\tilde{A}_{g,i}*r(i_g, j_g \forall g \in \theta)$$
 
-$\lambda_c * x_{i,c} * 
+This specification allows for testing the robustness of this analysis to different geographic thresholds of distance (such as defined by commute patterns), as well as different thresholds for industrial measures of relatedness. However, it also allows for the plotting of raw values of industrial relatedness based on geographic distances. 
 
-I then define $p_{i,c}$ as the share of the value of the output of commodity c that industry $i$ supplies. I can then construct a matrix $M_{P_i}$ with columns representing industries and rows representing the share of the value of the commodities that these i 
+## Implementation
 
-As such, I first define $C_{x_i}$ as a matrix with columns representing 
-
-To link production and use 
-
-numerator: use of commodity y as an input
-denominator: Total use of inputs by X
-
- mutate(input_share = value_num / intermediary_inputs) 
-
-
-
-Consider two industries, $i$ and $j$, two measures capture the intensity of relatedness between two industries (adaption of Fraser and Bergman, 2000): 
-
-$x_{ij}, x_{ji}$: intermediate commodities used by industry (i) from i (j) as a proportion of j's (i's) total intermediate goods purchases. A large value suggests that industry j depends on industry i as a source for a large proportion for its total intermediate inputs. 
-
-$y_{ij}, y{ji}$: intermediate goods sales from i (j) to j (i) as a proportion of i's (j's) total intermediate goods sales. A larger value suggests that i depends on industry j as a market for a large proportion of its total intermediate goods sales. 
-
-With these measures, it is possible to create a variety of matrices relating industries together. I focus first on defining industries by the degree to which they have common input purchasing patterns, in contrast to the standard NAICS classification system, which groups industries together based on the production of common outputs. 
-
-This measure is $r(x_i, x_j)$: the degree to which industries $i$ and $j$ have similar input purchasing patterns. In addition to this measure, I adopt two other measures proposed by Fraser and Bergman, 2000: 
-
-$r(y_i, y_j)$: the degree to which industries $i$ and $j$ have possess similar output selling patterns. Here, I note that this will generally be best classified by the existing NAICS system. 
-
-$r(x_i, y_j)$: the degree to which the buying pattern of industry $i$ matches the output pattern of industry $j$ (and reverse, as well)
-
-Whereas existing work using Input-Output accounts either reduces these variables to a single, maximum value (Delgado et al., 2014), or combines them together in a principle component analysis (Fraser and Bergman, 2000), I use each of these measures separately, and argue that they each capture unique aspects of sectoral variation in inputs and outputs. 
-
-Focusing on the manufacturing sector, the input-output use table results in a 232x326 matrix of 232 manufacturing industries (i), and their use of 326 commodities (c).  
-
-1. Total commodity output: in the SUPPLY table, output by commodity
-2. Total Product supply, basic price, total product supply purchasers prices (in the SUPPLY table), by commodity
-
-
-3. Total industry output (in the USE table)
-4. Total intermediate inputs ($ value of intermediate inputs used) USE Table
-- USE Table gives us total use of each commodity by each industry, as well as total production
-
-
-
-
-
-5. Total value of use of products, in the USE table, matches with product supply purchasers prices
-6. Total value of use of products as intermediate inputs, in the USE table
-
-5. Total exports of commodities (in the USE Table)
-6. Total imports of commodities (in the SUPPLY Table)
-
-7. Total industry supply as intermediate input, in the USE Table
-8. Total industry supply as all value
-
-Other measures: value of nongov IP investment, valeu of GOV ip investment, exports, value of state and local IP investment (all in the USE table)
-
-the input-output supply table data results in a 232x255 matrix of 232 manufacturing industries (i), and their output of 255 commodities (c).
+I turn to the implementation of the above measures across 2019 County Business Pattern Data, with 2017 Input Output Accounts Data. 
