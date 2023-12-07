@@ -32,6 +32,7 @@ library(here)
 library(patchwork)
 library(plotly)
 library(leaflet.extras)
+library(units)
 
 set.seed(37)
 title_theme <- theme(axis.text = element_text(size = 14), 
@@ -198,7 +199,7 @@ cbp_empzes <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>%
   select(EMPSZES_LABEL, EMPSZES) %>% 
   distinct()
 
-cbp_io <- readRDS(here("Input Output Data/cbp_manf_IO_crosswalk.RDS"))
+cbp_io <- readRDS(here("Input Output Data/cbp_manf_IO_crosswalk.RDS")) 
 ```
 
 
@@ -211,7 +212,8 @@ cbp_2019 <- read.csv(here("County Data/6_digit_naics_CBP.csv")) %>%
   mutate(across(.cols = c(EMP, ESTAB), ~ gsub(",", "", .)),
     emp_num = as.numeric(EMP), 
     ESTAB = as.numeric(ESTAB)) %>% 
-  filter(str_detect(NAME, "Mariana", negate = TRUE))
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  left_join(cbp_empzes)
 ```
 
 ```{r}
@@ -785,13 +787,37 @@ saveRDS(input_correlated_ind, here("Input Output Data/ind_corr.RDS"))
 ```
 
 
-At the conclusion of this analysis, the input-output tables yield 3 separate measures of how industries are related: 
+At the conclusion of this analysis, the input-output tables yield 3 separate measures of how industries are related. I define these matricies now. 
+
+```{r}
+cor_fn <- function(matrix){
+  
+  as.dist(1-cor(t(matrix), method = c("pearson"))) %>% 
+    as.matrix()
+  
+}
+```
 
 1. $r(x_{i,c}, x_{j,c})$: measures the degree to which industries $i$ and $j$ use the same input mix. This measure captures vertical agglomeration. 
 
+```{r}
+X_Ci <- cor_fn(input_matrix)
+```
+
+
 2. $r(y_{i,p}, y_{j,p})$: measures the degree to which industries $i$ and $j$ produce the same output mix, highly correlated with NAICS. This measure captures horizontal agglomeration
 
+```{r}
+Y_Pi <- cor_fn(output_matrix_raw)
+```
+
+
 3. $r(m_{i,j}, m_{j,i})$ measures the degree to which industries $i$ and $j$ source inputs from similar sets of suppliers. This measures is an improved measure of vertical agglomeration from (1). 
+
+
+```{r}
+M_ij <- mat_holder
+```
 
 
 # From Industries to Geographies
@@ -820,4 +846,264 @@ This specification allows for testing the robustness of this analysis to differe
 
 ## Implementation
 
-I turn to the implementation of the above measures across 2019 County Business Pattern Data, with 2017 Input Output Accounts Data. 
+I turn to the implementation of the above measures across 2019 County Business Pattern Data, with 2017 Input Output Accounts Data. The goal of this section of analysis is to derive three specific measures for each county-subsector pairing that measure the three types of relatedness between industries derived from the input-output data. 
+
+Input-Output Data accounts aggregate NAICS codes at a slightly different level than the CBP does. I use a crosswalk between the CBP NAICS codes and the Input-Output NAICS codes. The standard definition for industries will generally be the IO NAICS code definition. For the purposes of this analysis, I do not differentiate by the establishment sizes in each county and sub-sector, and instead look across all establishments. I create two measures: one that retains the granularity of the original NAICS weighting, and one that aggregates over industry codes available in the input-output data tables. 
+
+```{r}
+cbp_merge <- cbp_2019 %>% 
+  filter(EMPSZES == 1) %>% 
+  left_join(cbp_io) %>% 
+  ungroup() %>% 
+  group_by(NAICS2017_LABEL) %>% 
+  mutate(NAICS_tot_estab_nat = sum(ESTAB), 
+         NAICS_tot_emp_nat = sum(emp_num), 
+         NAICS_share_emp = emp_num/NAICS_tot_emp_nat, 
+         NAICS_share_estab = ESTAB/NAICS_tot_estab_nat) %>% 
+  ungroup() %>% 
+  mutate(NAICS_estab_lq = NAICS_share_estab / mean(NAICS_share_estab), 
+         NAICS_emp_lq = NAICS_share_emp / mean(NAICS_share_emp)) %>% 
+  group_by(ind_code, NAME) %>% 
+  mutate(county_ind_tot_estabs = sum(ESTAB),
+         county_ind_tot_emp = sum(emp_num)) %>% 
+  ungroup() %>% 
+  group_by(ind_code) %>% 
+  mutate(ind_tot_estab_nat = sum(ESTAB), 
+         ind_tot_emp_nat = sum(emp_num), 
+         ind_share_emp = county_ind_tot_emp/ind_tot_emp_nat, 
+         ind_share_estab = county_ind_tot_estabs/ind_tot_estab_nat) %>% 
+  ungroup() %>% 
+  mutate(ind_estab_lq = ind_share_estab / mean(ind_share_estab), 
+         ind_emp_lq = ind_share_emp / mean(ind_share_emp))
+
+```
+
+
+```{r}
+cbp_state <- read.csv(here("County Data/state_total_2019.csv")) %>% 
+  filter(LFO == 1, EMPSZES == 1) %>% 
+  select(area_title = NAME, state_estabs = ESTAB, state_emp = EMP) %>% 
+  left_join(area_codes %>% select(-c(area_fips))) %>% 
+  filter(!is.na(st))
+```
+
+```{r}
+cbp_final <- cbp_merge %>% 
+  left_join(cbp_state) %>% 
+  mutate(NAICS_gi_state_share_emp = emp_num / state_emp, 
+         NAICS_gi_state_share_estab = ESTAB / state_estabs, 
+         NAICS_a_gi_estabs = NAICS_estab_lq*NAICS_gi_state_share_estab,
+         NAICS_a_gi_emp = NAICS_emp_lq*NAICS_gi_state_share_emp,
+         ind_gi_state_share_emp = county_ind_tot_emp / state_emp, 
+         ind_gi_state_share_estab = county_ind_tot_estabs / state_estabs, 
+         ind_a_gi_estabs = ind_estab_lq*ind_gi_state_share_estab,
+         ind_a_gi_emp = ind_emp_lq*ind_gi_state_share_emp)
+```
+
+```{r}
+#Reduce to unique entries for each IO code
+cbp_final_io <- cbp_final %>% 
+  filter(!is.na(ind_code)) %>% 
+  group_by(NAME, ind_code) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 1) %>% 
+  ungroup()
+```
+
+
+This final dataframe contains county-level estimates for $\phi_{i,g}$ as well as $LQ_{g,i}$.I use these variables to calculate $\tilde{A}_{g,i}$. 
+
+I now create a procedure to 1) identify the other industries within a specific county; 2) identify the counties that are located within a specific radius $\theta$ of the county, 3) identifiy the industries that are within these counties, 4) subset the industry relatedness measures with these industries, 5) output a county-sub-sector level score. 
+
+```{r}
+#Get dataframe of county centers to merge against
+county_centers_cbp <- county_centers %>% 
+  rename(GEO_ID = AFFGEOID, state_fips = STATEFP, county_fips = COUNTYFP, county_name = NAME)
+```
+
+```{r}
+#Merge this with the CBP dataframe
+cbp_geog <- cbp_final_io %>% 
+  select(-c(STATEFP, COUNTYFP)) %>% 
+inner_join(county_centers %>% rename(GEO_ID = AFFGEOID, state_fips = STATEFP, county_fips = COUNTYFP, county_name = NAME), .) 
+```
+
+```{r}
+#Get ordered list of counties in the dataframe
+county_list <- cbp_final_io %>% 
+  select(NAME) %>% 
+  distinct() %>% 
+  unlist() %>% 
+  unname()
+```
+
+```{r}
+# Convert data into 'sf' object
+df_sf <- cbp_geog %>% 
+    st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+```
+
+## Case Study: Los Angeles County, CA 
+
+To build this procedure, I perform a case study analysis of Los Angeles County, which is a fitting example because of the variety of industrial activity that it hosts. The procedure I define will need to both loop through all counties in the data, as well as each sub-sector that is present in the final data. 
+
+```{r}
+la <- which(county_list %in% "Los Angeles County, California")
+```
+
+I start by getting the coordinates for the county. 
+
+```{r}
+  county_name <- c(county_list[la])
+  
+  county_ind <- cbp_final_io %>% 
+    filter(NAME %in% county_name) %>% 
+    arrange(ind_code)
+  
+  #get list of industries in county
+  
+  ind_in_county <- county_ind %>% 
+    filter(!is.na(ind_code)) %>% 
+    select(ind_code) %>% 
+    distinct() %>%
+    unlist() %>% 
+    unname()
+  
+  county_coords <- county_ind %>% 
+    ungroup() %>% 
+    select(GEO_ID) %>% 
+    distinct() %>% 
+    left_join(county_centers_cbp) 
+```
+
+Using the geometry object from this point, as well as the county data above, I compute the distance in miles between a given county, and all of the other counties in the dataset. I then merge these data back with specific variables of interest from the CBP data. 
+
+```{r}
+# Create the reference 'sf' object
+  ref_point_sf <- county_coords$geometry %>% 
+    st_coordinates() %>% as.data.frame() %>% 
+    st_as_sf(coords = c("X", "Y"), crs = 4326)
+  
+  # Compute the distance between the reference point and points from 'df_sf'
+  results <- st_distance(df_sf, ref_point_sf) %>% 
+    set_units("mi") %>% 
+    as.data.frame() %>% 
+    drop_units() %>% 
+    `colnames<-`(., "dist_mi") 
+  
+  results$NAME <- cbp_geog$NAME
+  results$NAICS2017 <- cbp_geog$NAICS2017
+  results$NAICS2017_label <- cbp_geog$NAICS2017_LABEL
+  results$industry_code <- cbp_geog$ind_code
+  results$ind_a_gi_estabs <- cbp_geog$ind_a_gi_estabs
+  results$ind_a_gi_emp <- cbp_geog$ind_a_gi_emp
+  results$NAICS_a_gi_estabs <- cbp_geog$NAICS_a_gi_estabs
+  results$NAICS_a_gi_emp <- cbp_geog$NAICS_a_gi_emp
+```
+
+```{r}
+results <- results %>%
+  arrange(industry_code)
+```
+
+I now establish the set of industries that exist in this county, as well as the set of industries that exist within a specific geographic distance from the main county. 
+
+```{r}
+ #Get list of counties and industries within a geographic distance of county and industry i
+  geog_ind <- results %>% 
+    filter(dist_mi < 100) %>% 
+    select(industry_code) %>% 
+    distinct() %>% 
+    unlist() %>% 
+    unname()
+```
+
+For each of these industries, iterate over the list of all industries present within the specified geographic distance. To do this, rather than iterate over rows, I leverage the advantages of matrices and matrix multiplication. Using the above data, I create two JxG matrices, one defined by establishments, and one defined by employment, where the rows represent industries, and columns represents industrial activity in a specific county g.
+
+```{r}
+results_ind_emp <- results %>% 
+  filter(dist_mi < 100, !is.na(industry_code)) %>% 
+  select(industry_code, NAME, ind_a_gi_emp, ind_a_gi_emp) %>% 
+  distinct() %>% 
+  pivot_wider(id_cols = industry_code, names_from = NAME, values_from = ind_a_gi_emp, values_fill = 0) %>% 
+  select(-c(industry_code)) %>% 
+  as.matrix()
+
+results_ind_estabs <- results %>% 
+  filter(dist_mi < 100, !is.na(industry_code)) %>% 
+  select(industry_code, NAME, ind_a_gi_estabs, ind_a_gi_estabs) %>% 
+  distinct() %>% 
+  pivot_wider(id_cols = industry_code, names_from = NAME, values_from = ind_a_gi_estabs, values_fill = 0) %>% 
+  select(-c(industry_code)) %>% 
+  as.matrix()
+```
+
+Using the initial list of industries from earlier, I obtain a set of industry relatedness measures from the input output data, focusing on how industries are related to the industry of interest, $i$. 
+
+```{r}
+#Use list of industries to get index of industries in relatedness measures
+  ind_list_index <- which(ind_list %in% geog_ind)
+
+  ind_i <- which(ind_list %in% ind_in_county)
+  
+  #There are 3 matrices of interest: X_Ci, Y_Pi, and M_ij. Subsetting these matricies by the index of industries i of interest, against the industries j that are present across geographies, produces a subset of this matrix that describes how each industry i is related to each other industry j in the data. 
+  
+  horz_agg <- Y_Pi[ind_i, ind_list_index] %>% as.matrix()
+  
+  vert_agg_1 <- M_ij[ind_i, ind_list_index] %>% as.matrix()
+  
+  vert_agg_2 <- X_Ci[ind_i, ind_list_index] %>% as.matrix()
+```
+
+
+For each relatedness matrix, I multiply by the geographic matrix defined in the above section.
+
+The resulting matrix $\beta_{j,g}$ then has rows defined by the industries related to the target industry $i$, across the counties that are within a specific geographic distance of that county. An individual entry in this matrix is the sum of the geographically weighted correlation between the individual industry $i$ and all other industries in a given county g that falls within some radius of the initial county of interest. 
+
+```{r}
+county_activity_norm <- length(ind_list_index) - proxyC::colZeros(results_ind_emp) 
+```
+
+```{r}
+duplicated_matrix <- sapply(1:length(ind_i), FUN = function(i) rep(county_activity_norm, 1))
+
+county_norm <- duplicated_matrix %>% t()
+```
+
+```{r}
+final_matrix_calc <- function(matrix1, matrix2){
+  
+  result1 <- matrix1 %*% matrix2
+  
+  final_result <- result1 / county_norm
+}
+```
+
+While the full matrix might be useful in the future, at the moment, I am interested in obtaining single point estimates for county-sub-sector entities. As such, I average over all the counties within the radius. 
+
+```{r}
+  horz_emp <- final_matrix_calc(horz_agg, results_ind_emp)
+  horz_estab <- final_matrix_calc(horz_agg, results_ind_estabs)
+  
+  vert1_emp <- final_matrix_calc(vert_agg_1, results_ind_emp)
+  vert1_estab <- final_matrix_calc(vert_agg_1, results_ind_estabs)
+  
+  vert2_emp <- final_matrix_calc(vert_agg_2, results_ind_emp)
+  vert2_estab <- final_matrix_calc(vert_agg_2, results_ind_estabs)
+```
+
+These values are collected, and then joined back with the initial county-subsector level data. Leveraging the fact that the initial indicies match, this becomes a rather simple task. 
+
+```{r}
+county_ind$horz_emp_mean <- rowMeans(horz_emp)
+county_ind$horz_estab_mean <- rowMeans(horz_estab)
+county_ind$vert1_emp_mean <- rowMeans(vert1_emp)
+county_ind$vert1_estab_mean <- rowMeans(vert1_estab)
+county_ind$vert2_emp_mean <- rowMeans(vert2_emp)
+county_ind$vert2_estab_mean <- rowMeans(vert2_estab)
+```
+
+This provides the final measure for each county-sub-sector entity (i,g), of the average correlation between that entity, and the other sub-sectors within a given geographic distance of the entity of interest. 
+
+This procedure must then be repeated for every county in the dataset. 
+
