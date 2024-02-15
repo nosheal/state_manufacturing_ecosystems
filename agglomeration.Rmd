@@ -1800,7 +1800,7 @@ final_results_merge <- final_cbp_results %>%
 ```
 
 
-```{r}
+```{r, eval = FALSE}
 final_results_merge %>% 
   select(input_emp, output_emp, supply_emp, input_estabs, output_estabs, supply_estabs, everything()) %>% 
   view()
