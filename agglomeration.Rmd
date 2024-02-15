@@ -761,6 +761,10 @@ input_results_final <- ind_cor_holder
 saveRDS(input_results_final, here("Input Output Data/input_results.RDS"))
 ```
 
+```{r}
+input_results_final <- readRDS(here("Input Output Data/input_results.RDS"))
+```
+
 ### Production of Outputs
 
 I now turn to measuring the output correlation between industries. In a way, output correlations are reflected in NAICS groupings; however, we do not have a way to capture the correlation between industries easily. As such, in this section, I construct a measure of output correlations. 
@@ -998,6 +1002,10 @@ output_results_final <- op_ind_cor_holder
 saveRDS(output_results_final, here("Input Output Data/output_results.RDS"))
 ```
 
+```{r}
+output_results_final <- readRDS(here("Input Output Data/output_results.RDS"))
+```
+
 
 ### Supply of Inputs
 
@@ -1167,6 +1175,9 @@ results_long <- results_df %>%
 saveRDS(mat_holder, here("Input Output Data/results_matrix.RDS"))
 ```
 
+```{r}
+mat_holder <- readRDS(here("Input Output Data/results_matrix.RDS"))
+```
 
 At the conclusion of this analysis, the input-output tables yield 3 separate measures of how industries are related. I define these matricies now. 
 
@@ -1772,7 +1783,7 @@ final_cbp_results %>%
 # Results 
 
 ```{r}
-final_cbp_results <- readRDS(here("Final Data/final_cbp_io_results.RDS"))
+final_cbp_results <- readRDS(here("Final Data/final_cbp_io_results_hhi.RDS"))
 ```
 
 
@@ -1999,7 +2010,6 @@ semicondcutor_comp_col <- get_col_match(semicondcutor_comp)
 ```{r}
 semiconductor_estabs_estabs <- semicondcutor_comp %>%
   filter(output_estabs > 0, supply_estabs != 0) %>% 
-  mutate(county_label = case_when(str_detect(NAME, "Washington County|Dallas|Maricopa") ~ NAME)) %>% 
   ggplot(aes(text = NAME)) + 
   geom_point(shape = 21, aes(x = log(output_estabs), y = log(supply_estabs), fill = naics_3digit_label, size = ind_emp_lq*10)) + 
   scale_fill_manual(values = semicondcutor_comp_col) + 
@@ -2013,6 +2023,63 @@ semiconductor_estabs_estabs <- semicondcutor_comp %>%
   theme_bw() + 
   axis_theme
 ```
+
+
+```{r}
+county_comp_estabs_estabs <- semiconductor_estabs_estabs + 
+geom_vline(xintercept = semicondcutor_comp %>% filter_function(output_estabs), color = semicondcutor_comp_col, size = 2) + 
+    geom_hline(yintercept = semicondcutor_comp %>% filter_function(supply_estabs), color = semicondcutor_comp_col, size = 2) + 
+  geom_point(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_estabs), size = ind_emp_lq*10), shape = 21, fill = "light grey") + 
+  geom_label_repel(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_estabs), label = NAME), fill = "light grey", size = 5) 
+```
+
+
+```{r}
+semiconductor_estabs_emp <- semicondcutor_comp %>%
+  filter(output_estabs > 0, supply_emp != 0) %>% 
+  ggplot(aes(text = NAME)) + 
+  geom_point(shape = 21, aes(x = log(output_estabs), y = log(supply_emp), fill = naics_3digit_label, size = ind_emp_lq*10)) + 
+  scale_fill_manual(values = semicondcutor_comp_col) + 
+  geom_vline(xintercept = agg_means$output_estabs) + 
+  geom_hline(yintercept = agg_means$supply_emp) + 
+  xlim(-15, -7.5) + 
+  ylim(-25, -10) + 
+  facet_wrap(~industry_desc) + 
+  guides(fill = "none", size = "none") +
+  labs(x = "County-Subsector Index of Output Horizontal Agglomeration \nEstablishments", y = "County-Subsector Index of Supply Vertical Agglomeration \nEmployment") +
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+county_comp_estabs_emp <- semiconductor_estabs_estabs + 
+geom_vline(xintercept = semicondcutor_comp %>% filter_function(output_estabs), color = semicondcutor_comp_col, size = 2) + 
+    geom_hline(yintercept = semicondcutor_comp %>% filter_function(supply_emp), color = semicondcutor_comp_col, size = 2) + 
+  geom_point(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_emp), size = ind_emp_lq*10), shape = 21, fill = "light grey") + 
+  geom_label_repel(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_emp), label = NAME), fill = "light grey", size = 5) 
+```
+
+
+```{r}
+semicondcutor_comp %>%
+    filter(output_estabs > 0, supply_estabs != 0) %>% 
+    mutate(county_label = case_when(str_detect(NAME, "Washington County|Dallas|Maricopa") ~ NAME)) %>% 
+    ggplot(aes(text = NAME)) + 
+    geom_point(shape = 21, aes(x = log(output_estabs), y = log(supply_estabs), fill = naics_3digit_label, size = ind_emp_lq*10)) + 
+    geom_point(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_estabs), size = ind_emp_lq*10), shape = 21, fill = "light grey") + 
+    geom_label_repel(data = semicondcutor_comp %>% filter(str_detect(NAME, "Washington County|Dallas|Maricopa")), aes(x = log(output_estabs), y = log(supply_estabs), label = NAME), fill = "light grey", size = 5) + 
+    scale_fill_manual(values = semicondcutor_comp_col) + 
+    geom_vline(xintercept = semicondcutor_comp %>% filter_function(output_estabs)) + 
+    geom_hline(yintercept = semicondcutor_comp %>% filter_function(supply_estabs)) + 
+    xlim(-15, -7.5) + 
+    ylim(-25, -10) + 
+    facet_wrap(~industry_desc) + 
+    guides(fill = "none", size = "none") +
+    labs(x = "County-Subsector Index of Output Horizontal Agglomeration \nEstablishments", y = "County-Subsector Index of Supply Vertical Agglomeration \nEstablishments") +
+    theme_bw() + 
+    axis_theme
+```
+
 ```{r}
 gran_graph_estabs_emp <- sector_comp_gran %>%
   filter(output_estabs > 0, supply_emp != 0) %>% 
@@ -2049,6 +2116,32 @@ sector_comp_gran %>%
 ```
 
 
+
+```{r}
+#index  version? 
+mask_states_weighted <- final_results_merge %>%
+  filter(!is.na(state_abbr), output_estabs > 0, supply_estabs > 0) %>% 
+  left_join(ind_crosswalk %>% rename(ind_code = industry_code)) %>% 
+  left_join(state_quads %>% select(state_abbr, state_quadrant)) %>% 
+  group_by(naics_3digit_label) %>% 
+  # mutate(across(.cols = c(horz_emp_mean, horz_estab_mean, vert1_emp_mean, vert1_estab_mean, vert2_emp_mean, vert2_estab_mean), ~ ./mean(.))) %>%
+  filter(state_abbr %in% c("MA", "AL", "IN", "NY", "MI", "WA")) %>% 
+ggplot(aes(text = paste(industry_desc, NAME, sep = "\n"))) + 
+  geom_point(shape = 21, aes(x = log(output_estabs), y = log(supply_estabs), fill = naics_3digit_label)) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+   geom_vline(xintercept = agg_means$output_estabs) + 
+  geom_hline(yintercept = agg_means$supply_estabs) + 
+  guides(fill = "none") +
+  labs(x = "County-Subsector Index of Output Horizontal Agglomeration \nEstablishments", y = "County-Subsector Index of Supply Vertical Agglomeration \nEstablishments") +
+  facet_wrap(~state_abbr) + 
+  theme_bw() + 
+  axis_theme + 
+  theme(strip.text.x = element_text(size = 14))
+  
+```
+
+
+#### Old Work
 ```{r}
 gran_graph_emp_estabs <- sector_comp_gran %>%
   filter(output_emp > 0, supply_estabs != 0) %>% 
