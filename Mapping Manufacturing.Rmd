@@ -1631,6 +1631,9 @@ state_ind_emp %>%
   reframe(ind_emp = sum(emp)) 
 ```
 
+```{r}
+state_quads <- readRDS(here("State Data/state_quadrants_1.RDS"))
+```
 
 ```{r}
 state_emp_cat <- state_ind_emp %>% 
@@ -1640,7 +1643,7 @@ state_emp_cat <- state_ind_emp %>%
   mutate(manf_emp_state = sum(emp), 
          manf_state_share = emp/tot_emp, 
          ind_emp_share = emp / manf_emp_state) %>% 
-  left_join(state_categorization_2019 %>% ungroup() %>% 
+  left_join(state_quads %>% ungroup() %>% 
               select(state_quadrant, area_fips, manf_emp = emp, state_abbr, manf_emp_share)) %>% 
   mutate(industry_desc = substring(industry_title, 11))
 ```
@@ -1680,6 +1683,46 @@ emp_state_geo <- emp_subsector_time + facet_geo(~state_abbr, grid = my_grid) +
 emp_state_geo
 ```
 
+```{r}
+naics_sub <- function(var, num){
+   as.numeric(str_sub({{ var }}, 1, num))
+}
+```
+
+```{r}
+input_categorizations <- readRDS(here("Input Output Data/cluster_assignments.RDS")) %>% 
+  mutate(naics_3digit = naics_sub(ind_code,3))
+```
+
+```{r}
+ExpandColorsSHIFT <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#66C2A5"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+```{r}
+h_cols <- ExpandColorsSHIFT(emp_ind_vector, 4) 
+```
+
+```{r}
+h_cols <- h_cols %>% 
+  group_by(original.color) %>% 
+  mutate(tal = seq(n())) %>% 
+  filter(tal == 4) %>% 
+  ungroup() %>% 
+  select(expanded.color) %>% 
+  unlist() %>% 
+  unname()
+```
 
 ```{r ,  fig.width=11,fig.height=8}
 legend <- get_legend(emp_subsector_time)

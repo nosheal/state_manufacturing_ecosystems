@@ -30,7 +30,14 @@ library(patchwork)
 
 ```{r}
 
-box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
+box_dir <- "/Users/Nosheal/Library/CloudStorage/Box-Box/COVID 19 Master Folder/Data/Masks/"
+
+```
+
+
+```{r, eval = FALSE}
+#For Windows
+#box_dir <- "C:/Users/Nikhil Kalathil/Box/COVID 19 Master Folder/Data/Masks/"
 
 ```
 
@@ -974,7 +981,7 @@ qcew_state <- readRDS(here("State Data/qcew_state.RDS"))
 
 ```{r}
 qcew_prelim <- qcew_state %>% 
-  filter(year == 2017, industry_code == "31-33") %>% 
+  filter(year == 2019, industry_code == "31-33") %>% 
   select(area_fips, estabs, tot_estabs, emp, tot_emp) %>% 
   mutate(manf_share = estabs / tot_estabs, 
          manf_emp_share = emp / tot_emp)
@@ -1039,12 +1046,17 @@ state_entry <- sample_tn %>%
   filter(state_abbr != "ON")
 ```
 
+
+
+
 ```{r}
 state_suppliers_size <- state_entry %>% 
-  ggplot() + 
-  geom_count(aes(x = estabs, y = total_suppliers, group = state_abbr), size = 2, alpha = 0.8) + 
-  labs(x = "Manufacturing Establishments by State, 2017", y = "Total Supplier Listings, \nby listed State") + 
+  ggplot(aes(x = manf_emp_share, y = `US Manufacturer`, group = state_abbr, label = state_abbr)) + 
+  geom_point(aes(size = tot_emp), alpha = 0.7) + 
+  geom_text_repel(aes()) + 
+  labs(x = "Manufacturing Share of State Employment, 2019", y = "Total Domestic Mask and Respirator Manufacturers, \nby listed State, 2021") + 
   theme_bw() + 
+  guides(size = "none") + 
   axis_theme
 
 state_suppliers_size
@@ -1077,8 +1089,8 @@ We now want to compare these patterns against the total number, and proportion o
 ```{r}
 manf_states <- state_entry %>% 
   ggplot() + 
-  geom_count(aes(x = manf_share, y = `US Manufacturer`, group = state_abbr), size = 2, alpha = 0.8) + 
-  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Confirmed Manufacturing Entrants, by State") + 
+  geom_count(aes(x =  manf_share, y = `US Manufacturer`, group = state_abbr), size = 2, alpha = 0.8) + 
+  labs(x = "Manufacturing Share of State Establishments, 2019", y = "Confirmed Manufacturing Entrants, by State") + 
   theme_bw() + 
   axis_theme
 ```
@@ -1089,13 +1101,14 @@ manf_states_label <- manf_states +
 ```
 
 
+
 We can now investigate the proportion of suppliers that manufacturer. 
 
 ```{r}
 manf_share <- state_entry %>% 
   ggplot() + 
   geom_count(aes(x = manf_share, y = prop_manf, group = state_abbr, size = `US Manufacturer`),  alpha = 0.8) + 
-  labs(x = "Manufacturing Share of State Establishments, 2017", y = "Proportion of Suppliers that Manufacturer, by State") + 
+  labs(x = "Manufacturing Share of State Establishments, 2019", y = "Proportion of Suppliers that Manufacturer, \n2021, by State") + 
   theme_bw() + 
   axis_theme
 ```
@@ -1136,15 +1149,7 @@ state_entry %>%
   mutate(year = 2017) %>% 
   mutate(`Non US Manufacturer` = case_when(
     is.na(`Non US Manufacturer`) ~ 0, 
-    TRUE ~ 1*`Non US Manufacturer`))---
-title: "firm_entry"
-author: "Nikhil Kalathil"
-date: "2023-02-22"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+    TRUE ~ 1*`Non US Manufacturer`))
 ```
 
 This document takes the cleaned final sample and provides descriptive statistics and preliminary regression results for a variety of firm entry hypotheses. 

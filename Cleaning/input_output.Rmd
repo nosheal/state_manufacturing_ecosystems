@@ -218,6 +218,13 @@ This dataframe contains information, aggregated at the INDUSTRY level, about the
 
 We can immediately produce some summary statistics about overall industry activity here. Again, this work focuses specifically on the manufacturing sector. 
 
+```{r}
+ind_agg %>% saveRDS(here("Input Output Data/ind_agg.RDS"))
+
+com_agg %>% saveRDS(here("Input Output Data/com_agg.RDS"))
+```
+
+
 ### Industry Level Manufacturing Sub-Sector Details
 
 ```{r}
@@ -1486,6 +1493,16 @@ Here, we bring in earlier segmented aggregate data about total industry supply t
 saveRDS(supply_table_final, here("Input Output Data/supply_table_final.RDS"))
 ```
 
+```{r}
+supply_table_all <- supply_table_final %>% 
+  left_join(sup_com_agg) %>% 
+  mutate(manf_percent = value_num / total_commodity_output) %>% #percentage of a given output that is manufactured by a given manufacturing industry
+  left_join(sup_ind_agg) %>% 
+  mutate(supply_percent = value_num / total_industry_supply) %>%  #percentage of total industry supply that a given output makes up
+  group_by(industry_code) %>% 
+  mutate(prod_num = n(), #Number of total products an industry produces 
+         main_prod = max(supply_percent, na.rm = TRUE)) #Across all commodities an industry produces, the maximum of the percentage of total industry supply a given output makes up
+```
 
 ```{r}
 manf_supply <- supply_table_final %>% 
@@ -1784,12 +1801,27 @@ We primarily focus on examining the percent of total supply that each industry p
 We again return to our clustering methodology
 
 ```{r}
+all_output <- supply_table_all %>% 
+  select(commodity_code, commodity_desc, industry_desc, industry_code, value_num, supply_percent) %>% 
+  pivot_wider(id_cols = c(industry_desc, industry_code), values_from = supply_percent, names_from = commodity_code, values_fill = 0)
+```
+
+
+```{r}
 
 output_clustering <- manf_supply %>% 
   select(commodity_code, commodity_desc, industry_desc, industry_code, value_num, supply_percent) %>% 
   pivot_wider(id_cols = c(industry_desc, industry_code), values_from = supply_percent, names_from = commodity_code, values_fill = 0)
 
+```
 
+```{r}
+all_output$ind_code_num <- as.numeric(sub("A.*", "", all_output$industry_code))
+```
+
+```{r}
+all_output %>% 
+  saveRDS(here("Input Output Data/all_output.RDS"))
 ```
 
 ```{r}

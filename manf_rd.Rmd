@@ -1160,6 +1160,9 @@ cbp_io <- cbp_holder %>%
   distinct()
 ```
 
+```{r}
+cbp_io %>% saveRDS(here("Input Output Data/cbp_manf_IO_crosswalk.RDS"))
+```
 
 
 ```{r}
@@ -1197,14 +1200,13 @@ estab_size_circles_inputs <- function(map, data, condition, var, rad, fill_opac,
 ```
 
 ```{r}
-cbp_2019 %>% left_join(cbp_io) %>% left_join(cluster_assignments) %>% view()
+cbp_input_ref <- cbp_2019 %>% left_join(cbp_io) %>% left_join(cluster_assignments)
 ```
 
 
 ```{r}
-input_manf <- estab_size_circles_inputs(gdp_manf_share, cbp_2019, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
+input_manf <- estab_size_circles_inputs(gdp_manf_share, cbp_input_ref, 1, EMPSZES_LABEL, rad = 50000, fill_opac = .8, color_opac = 0.3)
 ```
-
 
 
 
@@ -1233,10 +1235,6 @@ rd_codes <- rd_final %>%
 cbp_io_final <- rd_final %>%
   select(-c(naics_3digit_label, NAICS2017)) %>% 
   left_join(cbp_2019, .)
-```
-
-```{r}
-cbp_io_final %>% 
 ```
 
 
