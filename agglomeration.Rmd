@@ -296,7 +296,7 @@ filter_function <- function(data, var){
   
   data %>% 
     filter({{ var }} > 0) %>% 
-    mutate(mean_var = mean(log({{ var} }), na.rm = TRUE)) %>% 
+    mutate(mean_var = mean(log({{ var }}), na.rm = TRUE)) %>% 
     select(mean_var) %>% 
     distinct() %>% 
     unlist() %>% 
