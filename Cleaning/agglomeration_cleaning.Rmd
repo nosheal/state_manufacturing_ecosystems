@@ -102,6 +102,8 @@ states_sf <- states(cb = TRUE, resolution = "20m") %>%
   shift_geometry(position = "outside")
 ```
 
+
+
 ```{r, include = FALSE}
 #Change projection of data for leaflet
 
@@ -350,6 +352,7 @@ saveRDS(ind_crosswalk, here("Input Output Data/ind_crosswalk.RDS"))
 
 
 ```{r}
+#get list of commodities 
 com_list <- manf_inputs %>% 
   select(commodity_code) %>% 
   distinct() %>% 
@@ -358,6 +361,7 @@ com_list <- manf_inputs %>%
 ```
 
 ```{r}
+#get list of industries 
 ind_list <- manf_inputs %>% 
   select(industry_code) %>% 
   distinct() %>% 
@@ -1272,15 +1276,22 @@ cbp_merge <- cbp_2019 %>%
   mutate(ind_estab_lq = ind_share_estab / mean(ind_share_estab), 
          ind_emp_lq = ind_share_emp / mean(ind_share_emp)) %>% 
   group_by(NAME) %>% 
-  mutate(county_tot_estabs = sum(ESTAB),
-         county_tot_emp = sum(emp_num), 
-         county_perc_emp = emp_num / sum(emp_num, na.rm = TRUE), 
-         county_perc_estabs = ESTAB / sum(ESTAB, na.rm = TRUE), 
-         county_hhi_emp = 1- sum(county_perc_emp**2, na.rm = TRUE), 
-         county_hhi_estabs = 1 - sum(county_perc_estabs**2, na.rm = TRUE)) %>% 
-  ungroup() 
+  mutate(county_estabs = sum(ESTAB), 
+           county_emp = sum(emp_num), 
+           county_perc_emp = emp_num / county_emp, 
+           county_perc_estabs = ESTAB / county_estabs, 
+           county_hhi_emp = 1 - sum(county_perc_emp**2, na.rm = TRUE), 
+           county_hhi_estabs = 1 - sum(county_perc_estabs**2, na.rm = TRUE)) %>% 
+  ungroup()
+  
 
 ```
+
+```{r}
+cbp_all <- cbp_2019_all %>% select(county_tot_emp = tot_emp, county_tot_estabs = tot_estab, NAME)
+```
+
+
 
 
 ```{r}
@@ -1359,12 +1370,13 @@ To build this procedure, I perform a case study analysis of Los Angeles County, 
 ```{r}
 la <- which(county_list %in% "Los Angeles County, California")
 sno <- which(county_list %in% "Snohomish County, Washington")
+lam <- which(county_list %in% "Lamar County, Alabama")
 ```
 
 I start by getting the coordinates for the county. 
 
 ```{r}
-  county_name <- c(county_list[la])
+  county_name <- c(county_list[lam])
   
   county_ind <- cbp_final_io %>% 
     filter(NAME %in% county_name) %>% 
@@ -1413,8 +1425,8 @@ Using the geometry object from this point, as well as the county data above, I c
   results$ind_emp <- cbp_geog$county_ind_tot_emp
   results$county_estabs <- cbp_geog$county_tot_estabs
   results$county_emp <- cbp_geog$county_tot_emp
-  results$county_all_estabs <- cbp_geog$tot_estab
-  results$county_all_emp <- cbp_geog$tot_emp
+  results$state_all_estabs <- cbp_geog$tot_estab
+  results$state_all_emp <- cbp_geog$tot_emp
   results$county_hhi_emp <- cbp_geog$county_hhi_emp
   results$county_hhi_estabs <- cbp_geog$county_hhi_estabs
 ```
@@ -1438,6 +1450,7 @@ I now establish the set of industries that exist in this county, as well as the 
 
 For each of these industries, iterate over the list of all industries present within the specified geographic distance. To do this, rather than iterate over rows, I leverage the advantages of matrices and matrix multiplication. Using the above data, I create two JxG matrices, one defined by establishments, and one defined by employment, where the rows represent industries, and columns represents industrial activity in a specific county g.
 
+
 ```{r}
 county_ind_matrix <-  function(var){
   results %>% 
@@ -1452,7 +1465,7 @@ county_ind_matrix <-  function(var){
 
 
 ```{r}
-la_list <- results %>% 
+lam_list <- results %>% 
     filter(dist_mi < 100, !is.na(industry_code)) %>% 
     select(NAME) %>% 
     distinct() %>% 
@@ -1473,38 +1486,61 @@ results_estabs <- county_ind_matrix(ind_estabs)
 results_emp <- county_ind_matrix(ind_emp)
 ```
 
-```{r}
-#Get County HHI
 
-cnty_hhi_emp <- results %>% 
-  filter(NAME %in% county_name) %>% 
-  select(county_hhi_emp) %>% 
+```{r}
+#GET AREA HHI FUNCTION
+
+get_area_hhi <- function(data){ 
+  
+  area_results <- data %>% 
+    filter(dist_mi < 100, !is.na(industry_code)) %>% 
+    ungroup() %>% 
+    mutate(area_ind_estabs = sum(ind_estabs), 
+           area_ind_emp = sum(ind_emp), 
+           area_perc_emp = ind_emp / area_ind_emp, 
+           area_perc_estabs = ind_estabs / area_ind_estabs, 
+           area_hhi_emp = 1 - sum(area_perc_emp**2, na.rm = TRUE), 
+           area_hhi_estabs = 1 - sum(area_perc_estabs**2, na.rm = TRUE))
+  
+  return(area_results)
+  
+  }
+```
+
+```{r}
+#Get Area HHI
+
+area_hhi_emp <- get_area_hhi(results) %>% 
+  select(area_hhi_emp) %>% 
   distinct() %>% unlist() %>% unname() 
 
-cnty_hhi_estabs <- results %>% 
-  filter(NAME %in% county_name) %>% 
-  select(county_hhi_estabs) %>% 
+area_hhi_estabs <- get_area_hhi(results) %>% 
+  select(area_hhi_estabs) %>% 
   distinct() %>% unlist() %>% unname() 
 ```
 
-
 The resulting matrix tells us about the industries that are located within a 100 mile radius of county $g$.
 
-Using the initial list of industries from earlier, I obtain a set of industry relatedness measures from the input output data, focusing on how industries are related to the industry of interest, $i$. I perform this task for each of the input, output, and supply correlation matricies. 
+Using the initial list of industries from earlier, I obtain a set of industry relatedness measures from the input output data, focusing on how industries are related to the industry of interest, $i$. I perform this task for each of the input, output, and supply correlation matrices. We correct this measure by the HHI for the county to account for how concentrated/diversified the county's industrial composition is. As HHI increases, the measure of 
 
 ```{r}
-#create a helper function
+#create a helper function to correct for 0 correlation
 zero_norm <- function(matrix, hhi){ 
   
+  #County the number of rows that that have 0 correlation value in them
   matrix_zeros <- matrix %>% 
     proxyC:: rowZeros()
   
+  #Get ratio of industries that have 0 correlation value in them to all industries present in the subset of industries within the geographical radius of the target county. Agglomeration increases as the percent of correlated industries increases. 
   matrix_ratio <- matrix_zeros / length(ind_list_index)
   
+  #Find entries that have a zero-ratio, indicating that all industries are correlated
   zero_inputs <- which(matrix_ratio == 0)
   
+  #Replace these values with a value of 1
   matrix_ratio[zero_inputs] = 1
   
+  #Create a final normalizing ratio, that weights the ratio of uncorrelated industries against a measure of industry concentration. Here, as industry concentration rises, that means that the county is dominated by fewer industries. We need to weight the ratio of uncorrelated industries against the level of industry concentration in the county in general. 
   final_ratio <- matrix_ratio*hhi
   
   return(final_ratio)
@@ -1549,8 +1585,8 @@ input_agg <- X_ij[ind_list_index, ind_list_index] %>% as.matrix()
 For each relatedness matrix, I multiply by the geographic matrix defined in the above section.
 
 ```{r}
-input_agg_emp <- final_matrix_calc(input_agg, results_ind_emp, cnty_hhi_emp)
-input_agg_estabs <- final_matrix_calc(input_agg, results_ind_estabs, cnty_hhi_estabs)
+input_agg_emp <- final_matrix_calc(input_agg, results_ind_emp, area_hhi_emp)
+input_agg_estabs <- final_matrix_calc(input_agg, results_ind_estabs, area_hhi_estabs)
 ```
 
 The resulting vector $\beta_{j,g}$ then has rows defined by the industries related to the target industry $i$, across the counties that are within a specific geographic distance of that county. An individual entry in this matrix is the sum of the geographically weighted correlation between the individual industry $i$ and all other industries in a given county g that falls within some radius of the initial county of interest. 
@@ -1686,6 +1722,7 @@ for (i in 1:length(county_list)){
   results$county_hhi_emp <- cbp_geog$county_hhi_emp
   results$county_hhi_estabs <- cbp_geog$county_hhi_estabs
   
+  
   results <- results %>%
     arrange(industry_code)
   
@@ -1702,17 +1739,26 @@ for (i in 1:length(county_list)){
 
   results_ind_estabs <- county_ind_matrix(ind_a_gi_estabs)
   
-  #Get County HHI
-
-  cnty_hhi_emp <- results %>% 
-    filter(NAME %in% county_name) %>% 
-    select(county_hhi_emp) %>% 
-    distinct() %>% unlist() %>% unname() 
+  #Get AREA HHI
   
-  cnty_hhi_estabs <- results %>% 
-    filter(NAME %in% county_name) %>% 
-    select(county_hhi_estabs) %>% 
-    distinct() %>% unlist() %>% unname() 
+  area_hhi_emp <- get_area_hhi(results) %>% 
+  select(area_hhi_emp) %>% 
+  distinct() %>% unlist() %>% unname() 
+
+  area_hhi_estabs <- get_area_hhi(results) %>% 
+  select(area_hhi_estabs) %>% 
+  distinct() %>% unlist() %>% unname()
+  
+  #Get COUNTY HHI
+  
+  county_hhi_emp <- results %>% 
+  select(county_hhi_emp) %>% 
+  distinct() %>% unlist() %>% unname() 
+
+  county_hhi_estabs <- results %>% 
+  select(county_hhi_estabs) %>% 
+  distinct() %>% unlist() %>% unname()
+  
   
   #Use list of industries to get index of industries in relatedness measures
   ind_list_index <- which(ind_list %in% geog_ind)
@@ -1728,14 +1774,14 @@ for (i in 1:length(county_list)){
     
   #For each measure, apply a geographic weighting. 
   
-  input_emp <- final_matrix_calc(input_agg, results_ind_emp, cnty_hhi_emp)
-  input_estab <- final_matrix_calc(input_agg, results_ind_estabs, cnty_hhi_estabs)
+  input_emp <- final_matrix_calc(input_agg, results_ind_emp, 1)
+  input_estab <- final_matrix_calc(input_agg, results_ind_estabs, 1)
   
-  output_emp <- final_matrix_calc(output_agg, results_ind_emp, cnty_hhi_emp)
-  output_estab <- final_matrix_calc(output_agg, results_ind_estabs, cnty_hhi_estabs)
+  output_emp <- final_matrix_calc(output_agg, results_ind_emp, 1)
+  output_estab <- final_matrix_calc(output_agg, results_ind_estabs, 1)
   
-  supply_emp <- final_matrix_calc(supply_agg, results_ind_emp, cnty_hhi_emp)
-  supply_estab <- final_matrix_calc(supply_agg, results_ind_estabs, cnty_hhi_estabs)
+  supply_emp <- final_matrix_calc(supply_agg, results_ind_emp, 1)
+  supply_estab <- final_matrix_calc(supply_agg, results_ind_estabs, 1)
   
   if (nrow(county_ind) < length(input_emp)) { 
     
@@ -1778,4 +1824,14 @@ final_cbp_results %>%
   saveRDS(here("Final Data/final_cbp_io_results_hhi.RDS"))
 ```
 
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH AREA ESTABLISHMENT WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_area_hhi.RDS"))
+```
 
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH AREA ESTABLISHMENT WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_nohhi.RDS"))
+```
