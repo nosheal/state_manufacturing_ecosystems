@@ -353,7 +353,7 @@ saveRDS(ind_crosswalk, here("Input Output Data/ind_crosswalk.RDS"))
 
 ```{r}
 #get list of commodities 
-com_list <- manf_inputs %>% 
+com_list_inputs <- manf_inputs %>% 
   select(commodity_code) %>% 
   distinct() %>% 
   unlist() %>% 
@@ -393,16 +393,6 @@ input_matrix_raw <- input_cluster_raw %>%
   as.matrix()
 ```
 
-### Lambda_C
-
-At this point, I construct $\lambda_c$. 
-
-```{r}
-lambda_c <- com_agg %>% 
-  filter(commodity_code %in% com_list) %>% 
-  mutate(com_share = intermediate / total_use) %>% 
-  select(com_share, commodity_code)
-```
 
 So far, calculations have all been done with the use database. Introducing the supply of commodities requires a different database. 
 
@@ -423,18 +413,7 @@ manf_supply <- supply_table_final %>%
   ungroup()
 ```
 
-
-```{r}
-#list of goods made by the manufacturing industry
-com_code_list <- manf_supply %>% 
-  ungroup() %>% 
-  select(commodity_code) %>% 
-  distinct() %>% 
-  unlist() %>% 
-  unname()
-```
-
-I now create a 232 x 254 matrix, with the rows being individual industries, and columns being the commodities that industry outputs. The column number is indexed by a list of all commodity codes. 
+I now create a 232 x 252 matrix, with the rows being individual industries, and columns being the commodities that industry outputs. The column number is indexed by a list of all commodity codes. 
 
 ```{r}
 output_clustering <- manf_supply %>% 
@@ -449,6 +428,42 @@ output_matrix_raw <- output_clustering %>%
   select(-c(industry_desc, industry_code)) %>% 
   as.matrix()
 ```
+
+```{r}
+output_ordering <- data.frame(commodity_code = colnames(output_matrix_raw)) %>%
+  mutate(tal = seq(n()))
+```
+
+```{r}
+#list of goods made by the manufacturing industry
+com_list_outputs <- output_ordering %>% 
+  ungroup() %>% 
+  select(commodity_code) %>% 
+  distinct() %>% 
+  unlist() %>% 
+  unname()
+```
+
+### Lambda_C
+
+At this point, I construct $\lambda_c$. 
+
+```{r}
+lambda_c <- com_agg %>% 
+  mutate(com_share = intermediate / total_use) %>% 
+  select(com_share, commodity_code) 
+```
+
+```{r}
+lambda_c_manf <- lambda_c %>% 
+  left_join(output_ordering, .) %>% 
+  arrange(tal) %>% 
+  mutate(com_share = case_when(
+    is.na(com_share) ~ 0, 
+    TRUE ~ com_share
+  ))
+```
+
 
 ### Final Analysis
 
@@ -481,9 +496,8 @@ input_list <- industry_inputs$commodity_code
 
 ```{r}
 #Get Index for Inputs used by industry i
-inputs_used <- which(com_list %in% input_list)
+inputs_used <- which(com_list_outputs %in% input_list)
 ```
-
 Other manufacturing industries vary in their use of similar inputs. The total share of intermediary inputs accounted for by the subset of inputs used by industry i varies substantially, and can be calculated.  
 
 ```{r}
@@ -696,7 +710,7 @@ get_input_results <- function(industry){
   #Get List of Commodities used by industry I
   input_list <- industry_inputs$commodity_code
   #Get Index for Inputs used by industry i
-  inputs_used <- which(com_list %in% input_list)
+  inputs_used <- which(com_list_inputs %in% input_list)
   
   #Create Subset of Inputs Matrix of use of the set of commodities used by i
   input_results <- input_matrix[, inputs_used] %>% as.matrix()
@@ -783,22 +797,13 @@ industry_outputs <- manf_supply %>%
 
 
 ```{r}
-com_list_out <- manf_supply %>% 
-  ungroup() %>% 
-  select(commodity_code) %>% 
-  distinct() %>% 
-  unlist() %>% 
-  unname()
-```
-
-```{r}
 #Get List of Commodities produced by industry I
 output_list <- industry_outputs$commodity_code
 ```
 
 ```{r}
 #Get Index for outputs made by industry i
-outputs_made <- which(com_list_out %in% output_list)
+outputs_made <- which(com_list_outputs %in% output_list)
 ```
 
 Other manufacturing industries vary in their production of similar outputs. 
@@ -810,7 +815,7 @@ output_results <- output_matrix_raw[, outputs_made] %>% as.matrix()
 
 ```{r}
 #Sum of Production of products
-output_sums <- input_results %>% rowSums()
+output_sums <- output_results %>% rowSums()
 ```
 
 ```{r}
@@ -844,7 +849,7 @@ output_related_industries_graph <- output_rel_ind_clean %>%
 output_related_industries_graph
 ```
 
-I apply a cutoff of 40%, and filter for industries that can account for at least 50% of their value of outputs produced that comes from the semiconductor and related devices manufacturing sector. 
+I apply a cutoff of 40%, and filter for industries that can account for at least 40% of their value of outputs produced that comes from the semiconductor and related devices manufacturing sector. 
 
 ```{r}
 #Get list of related industries
@@ -878,7 +883,6 @@ op_ind_index <- output_rel_ind %>%
 ```
 
 For consistency, I use the spearmans correlation over the set of industries that have at least 40% of their value in production of goods produced by industry i. 
-
 
 ```{r}
 #Get Correlation
@@ -930,16 +934,16 @@ This above procedure must then be repeated many times, over the entire set of in
 get_output_results <- function(industry){ 
 
   
-  #Get List of Inputs for a specific industry I 
+  #Get List of Outputs for a specific industry I 
   industry_outputs <- manf_supply %>% 
     filter(industry_code %in% industry, value_num > 0) 
   
-  #Get List of Commodities used by industry I
+  #Get List of Commodities produced by industry I
   output_list <- industry_outputs$commodity_code
-  #Get Index for Inputs used by industry i
-  outputs_made <- which(com_list_out %in% input_list)
+  #Get Index for outputs used by industry i
+  outputs_made <- which(com_list_outputs %in% output_list)
   
-  #Create Subset of Inputs Matrix of use of the set of commodities used by i
+  #Create Subset of Output Matrix of use of the set of commodities used by i
   output_results <- output_matrix_raw[, outputs_made] %>% as.matrix()
   #Sum Use of Subset of Products
   output_sums <- output_results %>% rowSums()
@@ -947,7 +951,7 @@ get_output_results <- function(industry){
   #Create Dataframe of related industries
   op_related_ind <- data.frame(output_results) %>% 
     mutate(ind_i = ind_list,
-      row_sums = input_sums) %>% 
+      row_sums = output_sums) %>% 
     select(row_sums, ind_i, everything())
   
   #Get list of related industries
@@ -959,8 +963,6 @@ get_output_results <- function(industry){
 
   op_rel_ind <- op_related_ind %>% 
   filter(row_sums > (.4*op_sum_check)) 
-  
-  #NOTE: for a very few industries, not all of the intermediate inputs used are accounted for by the list of commodities (perhaps some of the intermediate inputs are scrap?). As such, the threshold we use is .50 of the maximum value of total commmodities used as inputs. 
   
   #Get index of related industries
   op_rel_ind_index <- which(ind_list %in% op_rel_ind$ind_i) 
@@ -1027,25 +1029,36 @@ industry = "334413"
 This industry uses a total of 109 commodities. Of these 109 commodities, 73 are produced by the manufacturing sector. 
 
 ```{r}
+#Get vector of inputs used by a sepcific industry i 
+input_vec <- manf_inputs %>% 
+  filter(industry_code %in% c(industry), value_num > 0) %>% 
+  select(commodity_code, commodity_desc, input_share, value_num, naics_3digit_label) %>% 
+  distinct()
+
 #Get List of Inputs for a specific industry I 
-  input_list <- manf_inputs %>% 
-    filter(industry_code %in% c(industry), value_num > 0) %>% 
+  input_list <- input_vec %>% 
     select(commodity_code) %>% 
     unlist() %>% 
     unname()
 
-#Match the commodity codes to the index of commodity codes we have (supply)
-  com_list_sup <- which(com_code_list %in% input_list) %>% 
-    unlist() %>% 
-    unname()
+# Restrict to inputs produced by the manufacturing sector
+input_vec_manf <- input_vec %>% 
+  filter(commodity_code %in% com_list_outputs) %>% 
+  left_join(output_ordering) %>% 
+  arrange(tal)
 ```
 
 ```{r}
+#Match the commodity codes to the index of commodity codes we have (supply)
+  com_list_sup <- which(com_list_outputs %in% input_list) %>% 
+    unlist() %>% 
+    unname()
+
 #Get the list of supplied commodities
-  supplied_commodities <- com_code_list[com_list_sup]
+  supplied_commodities <- com_list_outputs[com_list_sup]
   
-  #Get the lambda_c vector
-  lambda_inputs <- lambda_c %>% 
+  #Get the lambda_c vector for these commodities
+  lambda_inputs <- lambda_c_manf %>% 
       filter(commodity_code %in% supplied_commodities) %>% 
       select(com_share) %>% 
       unlist() %>% 
@@ -1059,45 +1072,222 @@ Thus, we can create a matrix that accounts for how other manufacturing industrie
   output_matrix <- output_matrix_raw[, com_list_sup] %>% as.matrix()
 ```
 
+This gives us a matrix of the production of inputs used by industry i, by all other industries j. 
 
-Since not all products are used at the same intensity as intermediary products, we must adjust. 
+Since not all products are used at the same intensity as intermediary products, we must adjust this matrix.  
 
 ```{r}
 # Perform element wise multiplication across the rows to normalize by use of commodity as an input
-  com_adj <- output_matrix*lambda_inputs
+ com_adj <- output_matrix*lambda_inputs
 ```
 
-Focusing in on the subset of commodities used as inputs by industry i, we can define a vector of the intensity of use of various commodities. Multiplying this vector by the matrix of output of commodities used by industry i supplied by the other manufacturing sectors, we arrive at a final vector of the supply of inputs used by industry i by the other manufacturing sectors. 
+
+#### As a Correlation
+
+Now, we can measure the correlation between the vector of inputs used by a given industry, and all other industries. 
 
 ```{r}
-  #Get Index for Supplied Commodities in Input Data
-  input_com_list <- which(com_list %in% supplied_commodities) 
+#isolate vector of inputs
+ind_inputs <- input_vec_manf$input_share 
+
+focus_commodities <- input_vec_manf$commodity_code
+```
+
+```{r}
+#add vector of inputs to output matrix
+supply_matrix <- output_matrix %>% rbind(ind_inputs %>% t())
+```
+
+```{r}
+#get correlation
+supply_corr <- cor(t(supply_matrix), method = c("spearman"))
+```
+
+```{r}
+#replace missing values with 0
+supply_corr <- replace(supply_corr, is.na(supply_corr), 0)
+```
+
+```{r}
+#convert to distance 
+supply_corr <- as.dist(supply_corr) %>% as.matrix()
+```
+
+Industries vary in the degree to which they supply the mixture of manufactured inputs that are used by the focal industry. We then manually correct for industries that are deemed to not "substantially supply" the target industries. These industries are defined as industries that on average, contribute less than 1% to the total supply of the vector of manufactured commodities used by the focal industry. 
+
+```{r}
+ind_use <- data.frame(industry_code = ind_list, supply_corr[233,-233], com_tot = rowSums(output_matrix) %>% round(5)) %>% 
+  filter(com_tot > .01) %>% 
+  left_join(ind_crosswalk) 
+
+ind_use_col <- get_col_match(ind_use)
+```
+
+
+```{r}
+ind_use %>% 
+  ggplot(aes(x = com_tot, y = naics_3digit_label, fill = naics_3digit_label)) +
+  geom_density_ridges() + 
+  geom_point(shape = 21) + 
+  guides(fill = "none") + 
+  scale_fill_manual(values = ind_use_col) + 
+  labs(x = "Total Supply of Commodities used by Focal Industry", y = "") + 
+  theme_bw() + 
+  axis_theme
+```
+
+For these industries, we assign a value of 0 to our matrix of correlations. 
+
+```{r}
+#Get nonsupply industries
+non_cor_ind <- which(rowSums(output_matrix) < .01)
+```
+
+```{r}
+#Fix values
+supply_corr[, non_cor_ind] = 0 
+```
+
+```{r}
+#Final DF
+supply_df <- data.frame(industry_code = ind_list, supply_corr_var = supply_corr[233,-233], com_tot = rowSums(output_matrix) %>% round(5)) %>% 
+  left_join(ind_crosswalk)
+```
+
+We see that we have some values that have a negative correlation. A manual inspection of these industries suggests that these industries share singular commodities with the focal industry (e.g. Scientific R&D), but otherwise do not produce relevant commodities. In most cases, industries with negative correlations are not very "related" to the focal industry (e.g. Abrasive.product.manufacturing, Soap.and.cleaning.compound.manufacturing, against Semiconductor manufacturing). As such, to correct for these cases, we take the absolute value of the correlation only in cases where the industry shares a 3-digit NAICS family. 
+
+```{r}
+
+#Clean DF
+supply_df_clean <- supply_df %>% 
+  mutate(supply_corr_var = case_when(
+    supply_corr_var < 0 & naics_3digit_label == unique(input_vec_manf$naics_3digit_label) ~ -1*supply_corr_var, 
+    supply_corr_var < 0 ~ 0, 
+    TRUE ~ supply_corr_var
+  )) 
+```
+
+We now define a function to replicate this across industries. 
+
+```{r}
+#Get correlation between industry inputs and other industry outputs 
+get_industry_supply_cor <- function(industry){
   
-  #Get Index for Industry I 
-  ind_row <- which(ind_list %in% c(industry))
+  #Get vector of inputs used by a sepcific industry i 
+  input_vec <- manf_inputs %>% 
+    filter(industry_code %in% c(industry), value_num > 0) %>% 
+    select(commodity_code, commodity_desc, input_share, value_num, naics_3digit_label) %>% 
+    distinct()
+
+  #Get List of Inputs for a specific industry I 
+  input_list <- input_vec %>% 
+    select(commodity_code) %>% 
+    unlist() %>% 
+    unname()
+
+  #Restrict to inputs produced by the manufacturing sector
+  input_vec_manf <- input_vec %>% 
+    filter(commodity_code %in% com_list_outputs) %>% 
+    left_join(output_ordering) %>% 
+    arrange(tal)
+
+  #Match the commodity codes to the index of commodity codes we have (supply)
+  com_list_sup <- which(com_list_outputs %in% input_list) %>% 
+    unlist() %>% 
+    unname()
+
+  #Get the list of supplied commodities
+  supplied_commodities <- com_list_outputs[com_list_sup]
   
-  #From the matrix of inputs $X_{C_i}$, extract the input columns that correspond to the inputs used by a given industry I. 
-  input_results <- input_matrix[ind_row, input_com_list] %>% as.matrix()
+  #From the matrix of outputs $Y_{P_i}$, extract the columns that correspond to the inputs used by industry $i$. 
+  output_matrix <- output_matrix_raw[, com_list_sup] %>% as.matrix()
+  
+  #isolate vector of inputs
+  ind_inputs <- input_vec_manf$input_share 
+
+  focus_commodities <- input_vec_manf$commodity_code
+
+  #add vector of inputs to output matrix
+  supply_matrix <- output_matrix %>% rbind(ind_inputs %>% t())
+  #get correlation
+  supply_corr <- cor(t(supply_matrix), method = c("spearman"))
+  #replace missing values with 0
+  supply_corr <- replace(supply_corr, is.na(supply_corr), 0)
+  #replace missing values with 0
+  supply_corr <- replace(supply_corr, is.na(supply_corr), 0)
+  #convert to distance 
+  supply_corr <- as.dist(supply_corr) %>% as.matrix()
+  #Get nonsupply industries
+  non_cor_ind <- which(rowSums(output_matrix) < .01)
+  #Fix values
+  supply_corr[, non_cor_ind] = 0 
+  #Final DF
+  supply_df <- data.frame(industry_code = ind_list, supply_corr_var = supply_corr[233,-233], com_tot = rowSums(output_matrix) %>% round(5)) %>% 
+    left_join(ind_crosswalk)
+  #Clean DF
+  supply_df_clean <- supply_df %>% 
+    mutate(supply_corr_var = case_when(
+      supply_corr_var < 0 & naics_3digit_label == unique(input_vec_manf$naics_3digit_label) ~ -1*supply_corr_var, 
+      supply_corr_var < 0 ~ 0, 
+      TRUE ~ supply_corr_var
+    )) %>% 
+    arrange(industry_code)
+
+  supply_results <- supply_df_clean %>% select(supply_corr_var) %>% unlist() %>% unname()
+  
+  return(supply_results)
+}
+```
+
+
+```{r}
+mat_holder <- matrix(0, 232, 232)
+
+for (i in 1:length(ind_list)){
+
+  
+  mat_holder[i, ] <- get_industry_supply_cor(ind_list[i])
+  
+
+}
 ```
 
 ```{r}
- supply_results <- t(input_results) %*% t(com_adj)
-```
-
-We then manually correct for industries that are deemed to not "substantially supply" the target industries. These industries are defined as industries that on average, contribute less than 1% to the total supply of a given commodity. For these industries, we assign a value of 0. 
-
-```{r}
-non_cor_ind <- which(rowMeans(output_matrix) < .01)
-```
-
-```{r}
-supply_results[, non_cor_ind] = 0 
+supply_mats <- mat_holder
 ```
 
 
 ```{r}
+results_df <- as.data.frame(mat_holder)
+
+colnames(results_df) <- ind_list
+
+results_long <- results_df %>% 
+  mutate(industry_i = ind_list) %>% 
+  select(industry_i, everything()) %>% 
+  pivot_longer( col = -c(industry_i), names_to = "industry_j", values_to = "m_ij")
+```
+
+```{r}
+supply_final <- results_long %>% rename(industry_code = industry_i) %>% 
+  left_join(ind_crosswalk)
+```
+
+
+```{r, eval = FALSE}
+saveRDS(supply_mats, here("Input Output Data/results_matrix_corr.RDS"))
+```
+
+```{r}
+supply_mats <- readRDS(here("Input Output Data/results_matrix_corr.RDS"))
+```
+
+
+#### As a Share
+
+```{r, eval = FALSE}
 #check to make sure this makes sense when applied to shares and not values
-get_industry_outputs <- function(industry){
+get_industry_outputs_share <- function(industry){
   
   #Get List of Inputs for a specific industry I 
   input_list <- manf_inputs %>% 
@@ -1108,7 +1298,7 @@ get_industry_outputs <- function(industry){
   
   
   #Match the commodity codes to the index of commodity codes we have (supply)
-  com_list_sup <- which(com_code_list %in% input_list) %>% 
+  com_list_sup <- which(com_cod %in% input_list) %>% 
     unlist() %>% 
     unname()
   
@@ -1151,7 +1341,7 @@ get_industry_outputs <- function(industry){
 ```
 
 
-```{r}
+```{r, eval = FALSE}
 mat_holder <- matrix(0, 232, 232)
 
 for (i in 1:length(ind_list)){
@@ -1164,7 +1354,7 @@ for (i in 1:length(ind_list)){
 ```
 
 
-```{r}
+```{r, eval = FALSE}
 results_df <- as.data.frame(mat_holder)
 
 colnames(results_df) <- ind_list
@@ -1179,9 +1369,12 @@ results_long <- results_df %>%
 saveRDS(mat_holder, here("Input Output Data/results_matrix.RDS"))
 ```
 
-```{r}
+```{r, eval = FALSE}
 mat_holder <- readRDS(here("Input Output Data/results_matrix.RDS"))
 ```
+
+### Final Measures
+
 
 At the conclusion of this analysis, the input-output tables yield 3 separate measures of how industries are related. I define these matricies now. 
 
@@ -1216,7 +1409,7 @@ output_matrix_final <- output_results_final %>%
 
 
 ```{r}
-M_ij <- mat_holder
+M_ij <- supply_mats
 ```
 
 
@@ -1251,8 +1444,14 @@ I turn to the implementation of the above measures across 2019 County Business P
 Input-Output Data accounts aggregate NAICS codes at a slightly different level than the CBP does. I use a crosswalk between the CBP NAICS codes and the Input-Output NAICS codes. The standard definition for industries will generally be the IO NAICS code definition. For the purposes of this analysis, I do not differentiate by the establishment sizes in each county and sub-sector, and instead look across all establishments. I create two measures: one that retains the granularity of the original NAICS weighting, and one that aggregates over industry codes available in the input-output data tables. 
 
 ```{r}
+cbp_all <- cbp_2019_all %>% select(county_tot_emp = tot_emp, county_tot_estabs = tot_estab, NAME)
+```
+
+
+```{r}
 cbp_merge <- cbp_2019 %>% 
   filter(EMPSZES == 1) %>% 
+  left_join(cbp_all) %>% 
   left_join(cbp_io) %>% 
   ungroup() %>% 
   group_by(NAICS2017_LABEL) %>% 
@@ -1282,16 +1481,10 @@ cbp_merge <- cbp_2019 %>%
            county_perc_estabs = ESTAB / county_estabs, 
            county_hhi_emp = 1 - sum(county_perc_emp**2, na.rm = TRUE), 
            county_hhi_estabs = 1 - sum(county_perc_estabs**2, na.rm = TRUE)) %>% 
-  ungroup()
+  ungroup() 
   
 
 ```
-
-```{r}
-cbp_all <- cbp_2019_all %>% select(county_tot_emp = tot_emp, county_tot_estabs = tot_estab, NAME)
-```
-
-
 
 
 ```{r}
@@ -1325,13 +1518,91 @@ cbp_final_io <- cbp_final %>%
   ungroup() %>% 
   filter(!is.na(STATEFP)) %>% 
   left_join(cbp_2019_all %>% 
-              select(GEO_ID = AFFGEOID, tot_emp, tot_estab))
+              select(GEO_ID = AFFGEOID, tot_emp, tot_estab)) %>% 
+  arrange(ind_code)
 
 #NOTE: Not all counties in the US have manufacturing employment. As such, the dataframe cbp_2019_all has more counties than the above dataframe. Manufacturing activity accounts for a small share of establishments. As such, we continue to focus on the manufacturing sector, and do not bring in county level totals for employment and establishments. 
 ```
 
+```{r}
+cbp_egk <- cbp_final_io %>% 
+  #EGK MEASURES (S_RI)
+  mutate(s_ri_estabs = county_ind_tot_estabs / county_tot_estabs, 
+       s_ri_emp = county_ind_tot_emp / county_tot_emp) %>% 
+  #REST OF EGK MEASURES (X_RI)
+  group_by(NAME) %>% 
+  mutate(x_r_estabs = mean(s_ri_estabs, na.rm = TRUE),
+           x_r_emp = mean(s_ri_emp, na.rm = TRUE)) %>% 
+  ungroup()
+```
 
-This final dataframe contains county-level estimates for $\phi_{i,g}$ as well as $LQ_{g,i}$.I use these variables to calculate $\tilde{A}_{g,i}$. 
+```{r}
+coi_denom <- cbp_egk %>%
+  select(NAME, x_r_estabs, x_r_emp) %>% 
+  distinct() %>% 
+  mutate(coi_denom_estabs = (1-sum(x_r_estabs**2, na.rm = TRUE)), 
+         coi_denom_emp = (1-sum(x_r_emp**2, na.rm = TRUE)))
+```
+
+
+```{r}
+cbp_egk <- cbp_egk %>% 
+  left_join(coi_denom) %>% 
+  mutate(coi_num_ri_estabs = s_ri_estabs - x_r_estabs,
+         coi_num_ri_emp = s_ri_emp - x_r_emp) 
+```
+
+We now create a matrix with the EGK measure of co-agglomeration. 
+
+```{r}
+egk_long <- cbp_final_io %>% 
+  mutate(coi_frac_ri_estabs = coi_num_ri_estabs/coi_denom_estabs,
+          coi_frac_ri_emp = coi_num_ri_emp/coi_denom_emp) %>% 
+  filter(!is.na(ind_code)) %>%
+  select(ind_code, NAME, coi_frac_ri_estabs, coi_frac_ri_emp, coi_num_ri_estabs, coi_num_ri_emp) 
+```
+
+```{r}
+frac_ir_matrix_estabs <- egk_long %>% 
+    pivot_wider(id_cols = ind_code, names_from = NAME, values_from = coi_frac_ri_estabs, values_fill = 0) %>% 
+    select(-c(ind_code)) %>% 
+    as.matrix()
+```
+
+```{r}
+frac_ir_matrix_emp <- egk_long %>% 
+    pivot_wider(id_cols = ind_code, names_from = NAME, values_from = coi_frac_ri_emp, values_fill = 0) %>% 
+    select(-c(ind_code)) %>% 
+    as.matrix()
+```
+
+```{r}
+jr_matrix_estabs <- egk_long %>% 
+    pivot_wider(id_cols = ind_code, names_from = NAME, values_from = coi_num_ri_estabs, values_fill = 0) %>% 
+    select(-c(ind_code)) %>% 
+    as.matrix()
+```
+
+```{r}
+jr_matrix_emp <- egk_long %>% 
+    pivot_wider(id_cols = ind_code, names_from = NAME, values_from = coi_num_ri_emp, values_fill = 0) %>% 
+    select(-c(ind_code)) %>% 
+    as.matrix()
+```
+
+We create two final matricies, one for employment and establishments. These are 229x229 sized matricies that capture the co-agglomeration betweeen two industries across the regions that they are present in. 
+
+```{r}
+coi_matrix_ij_estabs <- frac_ir_matrix_estabs %*% t(jr_matrix_estabs)
+```
+
+```{r}
+coi_matrix_ij_emp <- frac_ir_matrix_emp %*% t(jr_matrix_emp)
+```
+
+Our final dataframe contains county-level estimates for $\phi_{i,g}$ as well as $LQ_{g,i}$.I use these variables to calculate $\tilde{A}_{g,i}$. 
+
+## Analysis
 
 I now create a procedure to 1) identify the other industries within a specific county; 2) identify the counties that are located within a specific radius $\theta$ of the county, 3) identifiy the industries that are within these counties, 4) subset the industry relatedness measures with these industries, 5) output a county-sub-sector level score. 
 
@@ -1429,6 +1700,11 @@ Using the geometry object from this point, as well as the county data above, I c
   results$state_all_emp <- cbp_geog$tot_emp
   results$county_hhi_emp <- cbp_geog$county_hhi_emp
   results$county_hhi_estabs <- cbp_geog$county_hhi_estabs
+  results$coi_num_ri_estabs <- cbp_geog$coi_num_ri_estabs
+  results$coi_num_ri_emp <- cbp_geog$coi_num_ri_emp
+  results$coi_denom_estabs <- cbp_geog$coi_denom_estabs
+  results$coi_denom_emp <- cbp_geog$coi_denom_emp
+  
 ```
 
 ```{r}
@@ -1450,11 +1726,16 @@ I now establish the set of industries that exist in this county, as well as the 
 
 For each of these industries, iterate over the list of all industries present within the specified geographic distance. To do this, rather than iterate over rows, I leverage the advantages of matrices and matrix multiplication. Using the above data, I create two JxG matrices, one defined by establishments, and one defined by employment, where the rows represent industries, and columns represents industrial activity in a specific county g.
 
+### Set Geographic Radius
+
+```{r}
+geog_radius = 100
+```
 
 ```{r}
 county_ind_matrix <-  function(var){
   results %>% 
-    filter(dist_mi < 100, !is.na(industry_code)) %>% 
+    filter(dist_mi <= geog_radius, !is.na(industry_code)) %>% 
     select(industry_code, NAME, ind_a_gi_emp, ind_a_gi_emp, {{ var }}) %>% 
     distinct() %>% 
     pivot_wider(id_cols = industry_code, names_from = NAME, values_from = {{ var }}, values_fill = 0) %>% 
@@ -1493,7 +1774,7 @@ results_emp <- county_ind_matrix(ind_emp)
 get_area_hhi <- function(data){ 
   
   area_results <- data %>% 
-    filter(dist_mi < 100, !is.na(industry_code)) %>% 
+    filter(dist_mi <= geog_radius, !is.na(industry_code)) %>% 
     ungroup() %>% 
     mutate(area_ind_estabs = sum(ind_estabs), 
            area_ind_emp = sum(ind_emp), 
@@ -1531,16 +1812,16 @@ zero_norm <- function(matrix, hhi){
   matrix_zeros <- matrix %>% 
     proxyC:: rowZeros()
   
-  #Get ratio of industries that have 0 correlation value in them to all industries present in the subset of industries within the geographical radius of the target county. Agglomeration increases as the percent of correlated industries increases. 
+  #Get ratio of industries that have 0 correlation value in them to all industries present in the subset of industries within the geographical radius of the target county. Agglomeration should increase as the ratio of uncorrelated industries decreases
   matrix_ratio <- matrix_zeros / length(ind_list_index)
   
   #Find entries that have a zero-ratio, indicating that all industries are correlated
   zero_inputs <- which(matrix_ratio == 0)
-  
-  #Replace these values with a value of 1
+
+  #Replace zero values with a value of 1
   matrix_ratio[zero_inputs] = 1
   
-  #Create a final normalizing ratio, that weights the ratio of uncorrelated industries against a measure of industry concentration. Here, as industry concentration rises, that means that the county is dominated by fewer industries. We need to weight the ratio of uncorrelated industries against the level of industry concentration in the county in general. 
+  #We need to weight the ratio of uncorrelated industries against the level of industry concentration in the county in general. 
   final_ratio <- matrix_ratio*hhi
   
   return(final_ratio)
@@ -1607,8 +1888,8 @@ output_agg <- Y_ij[ind_list_index, ind_list_index] %>% as.matrix()
 For each relatedness matrix, I multiply by the geographic matrix defined in the above section.
 
 ```{r}
-output_agg_emp <- final_matrix_calc(output_agg, results_ind_emp, cnty_hhi_emp)
-output_agg_estabs <- final_matrix_calc(output_agg, results_ind_estabs, cnty_hhi_estabs)
+output_agg_emp <- final_matrix_calc(output_agg, results_ind_emp, area_hhi_emp)
+output_agg_estabs <- final_matrix_calc(output_agg, results_ind_estabs, area_hhi_estabs)
 ```
 
 ### Supply 
@@ -1622,15 +1903,15 @@ supply_agg <- M_ij[ind_list_index, ind_list_index] %>% as.matrix()
 For each relatedness matrix, I multiply by the geographic matrix defined in the above section.
 
 ```{r}
-supply_agg_emp <- final_matrix_calc(supply_agg, results_ind_emp, cnty_hhi_emp)
-supply_agg_estabs <- final_matrix_calc(supply_agg, results_ind_estabs, cnty_hhi_estabs)
+supply_agg_emp <- final_matrix_calc(supply_agg, results_ind_emp, area_hhi_emp)
+supply_agg_estabs <- final_matrix_calc(supply_agg, results_ind_estabs, area_hhi_estabs)
 ```
 
 These values are collected, and then joined back with the initial county-subsector level data. Leveraging the fact that the initial indicies match, this becomes a rather simple task. 
 
 ```{r}
 other_counties <- results %>% 
-  filter(dist_mi < 100, !is.na(industry_code)) %>% 
+  filter(dist_mi <= geog_radius, !is.na(industry_code)) %>% 
   select(NAME) %>% 
   unlist() %>% 
   unname()
@@ -1728,7 +2009,7 @@ for (i in 1:length(county_list)){
   
   #Get list of industries within a geographic distance
   geog_ind <- results %>% 
-    filter(dist_mi < 100) %>% 
+    filter(dist_mi < geog_radius) %>% 
     select(industry_code) %>% 
     distinct() %>% 
     unlist() %>% 
@@ -1834,4 +2115,34 @@ final_cbp_results %>%
 #THIS VERSION IS THE ADJUSTED VERSION WITH AREA ESTABLISHMENT WEIGHTING
 final_cbp_results %>% 
   saveRDS(here("Final Data/final_cbp_io_results_nohhi.RDS"))
+```
+
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH AREA ESTABLISHMENT WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_nohhi_250.RDS"))
+```
+
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH CORRELATION SUPPLY WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_nohhi_supply_cor.RDS"))
+```
+
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH CORRELATION SUPPLY WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_0522_noratio.RDS"))
+```
+
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH CORRELATION SUPPLY WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_0522.RDS"))
+```
+
+```{r, eval = FALSE}
+#THIS VERSION IS THE ADJUSTED VERSION WITH CORRELATION SUPPLY WEIGHTING
+final_cbp_results %>% 
+  saveRDS(here("Final Data/final_cbp_io_results_0522_og.RDS"))
 ```

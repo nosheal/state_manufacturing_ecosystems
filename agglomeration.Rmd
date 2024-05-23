@@ -44,7 +44,7 @@ title_theme <- theme(axis.text = element_text(size = 14),
 
 axis_theme <- theme(axis.text = element_text(size = 10), 
         axis.title = element_text(size = 18), 
-         strip.text.x = element_text(size = 14))
+         strip.text.x = element_text(size = 18))
 ```
 
 ```{r, include = FALSE}
@@ -148,7 +148,7 @@ ind_3digit <- qcew_3digits %>%
 
 ```{r, include = FALSE}
 #Define colors 
-emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#FDC086", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#E3AC78", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
 ```
 
 ```{r}
@@ -236,6 +236,10 @@ cbp_2019_all <- read.csv(here("County Data/total_naics_2019.csv")) %>%
 ```
 
 ```{r}
+cbp_all <- cbp_2019_all %>% select(county_tot_emp = tot_emp, county_tot_estabs = tot_estab, NAME)
+```
+
+```{r}
 cbp_pay <- cbp_2019 %>% 
   filter(EMPSZES == 1) %>% 
   left_join(cbp_io) %>% 
@@ -299,7 +303,7 @@ This document generates graphs and models to measure heterogeneity in agglomerat
 We start by importing our data with our measures of agglomeration. 
 
 ```{r}
-final_cbp_results <- readRDS(here("Final Data/final_cbp_io_results_nohhi.RDS"))
+final_cbp_results <- readRDS(here("Final Data/final_cbp_io_results_nohhi_supply_cor.RDS"))
 ```
 
 
@@ -677,7 +681,7 @@ vert_estabs_facet
 
 ```{r}
 vert_emp_estabs <- vert_agg %>% 
-  ggplot(aes(x = vert_dist_emp, y = vert_dist_estabs, fill = naics_3digit_label)) +
+  ggplot(aes(x = vert_dist_emp, y = vert_dist_estabs, fill = naics_3digit_label, text = industry_desc)) +
   geom_point(shape = 21) +
   scale_fill_manual(values = emp_ind_vector) + 
   guides(fill = "none") + 
@@ -712,35 +716,6 @@ horz_col <- "#DAD2E3"
 vert_col <- "#DBE3D2"
 ```
 
-### All Counties and Sectors
-
-```{r}
-all <- final_results_merge %>% 
-  filter(supply_estabs > 0 ) %>% 
-  mutate(horz_agg = log(output_estabs), 
-         vert_agg = log(supply_estabs)) %>% 
-  ggplot() + 
-  geom_point(aes(x = horz_agg, y = vert_agg, fill = naics_3digit_label), shape = 21) + 
-    scale_fill_manual(values = emp_ind_vector)+ 
-    guides(fill = "none")
-```
-
-```{r}
-all2 <- final_results_merge1 %>%
-  mutate(horz_agg = log(output_estabs), 
-         vert_agg = log(supply_estabs)) %>% 
-  ggplot() + 
-  geom_point(aes(x = horz_agg, y = vert_agg, fill = naics_3digit_label), shape = 21) + 
-    scale_fill_manual(values = emp_ind_vector)+ 
-    guides(fill = "none")
-```
-
-
-```{r}
-all1 <- all + facet_wrap(~naics_3digit_label)
-
-all2 <- all2 + facet_wrap(~naics_3digit_label)
-```
 
 
 
@@ -870,15 +845,15 @@ ggplot() +
 #### Maps
 
 ```{r}
-county_horz_agg_df <- final_results_merge0 %>% 
+county_horz_agg_df <- final_results_merge %>% 
   county_sum_data(output_estabs, output_estabs_mean, output_estabs_sd) %>% 
   rename(horz_estabs_mean = agg_var_mean, horz_estabs_sd = agg_var_sd, horz_max = agg_max, horz_dist = mean_dist, sd_horz = sd_agg, horz_ind = agg_ind)
 
-county_vert_agg_df <- final_results_merge0 %>% 
+county_vert_agg_df <- final_results_merge %>% 
   county_sum_data(supply_estabs, supply_estabs_mean, supply_estabs_sd) %>% 
   rename(vert_estabs_mean = agg_var_mean, vert_estabs_sd = agg_var_sd, vert_max = agg_max, vert_dist = mean_dist, sd_vert = sd_agg, vert_ind = agg_ind)
 
-county_agg0 <- full_join(county_horz_agg_df, county_vert_agg_df) %>% 
+county_agg <- full_join(county_horz_agg_df, county_vert_agg_df) %>% 
   left_join(final_results_merge %>% select(area_fips, NAME) %>% distinct()) %>% filter(!is.na(horz_estabs_mean), !is.na(vert_estabs_mean))
 ```
 
@@ -894,7 +869,7 @@ distance_from_origin <- function(x, y) {
 
 
 ```{r}
-county_quad0 <- county_agg0 %>% 
+county_quad <- county_agg %>% 
   mutate(agg_quad = case_when(
     horz_dist >= 0 & vert_dist >= 0 ~ "General Agglomeration", 
     horz_dist < 0 & vert_dist >= 0 ~ "Supplier Agglomeration", 
@@ -920,7 +895,7 @@ county_agg_map_df <- county_quad %>%
 ```{r}
 all_agg_map <- county_agg_map_df %>% 
   ggplot(aes(long, lat, group = group)) + 
-  geom_polygon(data = urbnmapr::states, colour = NA, fill = "darkgrey") + 
+  geom_polygon(data = urbnmapr::states, colour = "black", fill = "darkgrey") + 
   geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "General Agglomeration"), aes(fill = agg_dist),  color = "#6BC506", show.legend = FALSE) +
   coord_map(projection = "albers", lat0 = 39, lat1 = 45) + 
   scale_fill_gradient(low = "#f6f1eb", high = "#6BC506", limits =  c(0, 5)) + 
@@ -952,7 +927,7 @@ map_function <- function(df){
   scale_fill_gradient(low = "#f6f1eb", high = "#8F04CB", limits =  c(0, 2.05)) + 
   new_scale_fill() + 
   geom_polygon(data = df %>% filter(agg_quad == "Peer Agglomeration"), aes(fill = agg_dist), color = "#049BCB", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#049BCB", limits =  c(0, 4.1)) + 
+  scale_fill_gradient(low = "#f6f1eb", high = "#049BCB", limits =  c(0, 5)) + 
   new_scale_fill() + 
   geom_polygon(data = df %>% filter(agg_quad == "Low Agglomeration"), aes(fill = agg_dist), color = "#CB5804", show.legend = FALSE) +
   scale_fill_gradient(low = "#f6f1eb", high = "#CB5804", limits =  c(0, 4.2)) + 
@@ -984,36 +959,14 @@ county_comp <- county_quad %>%
 ```
 
 
-```{r}
-county_agg_map_df %>% 
-  ggplot(aes(long, lat, group = group)) + 
-  geom_polygon(data = urbnmapr::states, colour = "black", fill = "darkgrey") + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "General Agglomeration"), aes(fill = agg_dist),  color = "#6BC506", show.legend = FALSE) +
-  coord_map(projection = "albers", lat0 = 39, lat1 = 45) + 
-  scale_fill_gradient(low = "#f6f1eb", high = "#6BC506", limits =  c(0, 3)) + 
-  new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Supplier Agglomeration"), aes(fill = agg_dist), color = "#8F04CB", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#8F04CB", limits =  c(0, 2.2)) + 
-  new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Peer Agglomeration"), aes(fill = agg_dist),  color = "#049BCB", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#049BCB", limits =  c(0, 1.75)) + 
-  new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Low Agglomeration"), aes(fill = agg_dist),  color = "#CB5804", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#CB5804", limits =  c(0, 4)) + 
-  theme_map() 
-  
-```
-
 
 ### Varieties of Agglomeration
 
 ```{r}
-sector_var0 <- op_horz0 %>% 
-  left_join(vert_agg0) %>%
+sector_var <- op_horz %>% 
+  left_join(vert_agg) %>%
   ggplot() + 
   geom_point(aes(x = horz_dist_estabs, vert_dist_estabs, fill = naics_3digit_label, text = industry_desc), shape = 21, size = 5) + 
-  geom_vline(xintercept = 0) + 
-  geom_hline(yintercept = 0) + 
   scale_fill_manual(values = emp_ind_vector) + guides(fill = "none") + 
   theme_bw() + 
   labs(x = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
@@ -1072,15 +1025,22 @@ focus_graph <- focus_sector_var %>%
   facet_wrap(~factor(naics_3digit_label, levels = c("Transportation equipment manufacturing", "Electrical equipment, appliance, and component manufacturing", "Food manufacturing", "Computer and electronic product manufacturing"))) + 
   theme(strip.text = element_text(size = 18))
 ```
-
+```{r}
+sector_facet <- sector_var + facet_wrap(~naics_3digit_label)
+```
 
 ```{r}
-detailed_ind_list <- c("334413", "335911", "311910", "336411")
+sector_facet
 ```
 
 
 ```{r}
-focus_graph + geom_point(data = focus_sector_var %>% filter(ind_code %in% detailed_ind_list), aes(x = horz_dist_estabs, y = vert_dist_estabs), fill = "grey", size = 5, shape = 21)
+detailed_ind_list <- c("334413", "311910", "335911", "336411")
+```
+
+
+```{r}
+focus_graph_points <- focus_graph + geom_point(data = focus_sector_var %>% filter(ind_code %in% detailed_ind_list), aes(x = horz_dist_estabs, y = vert_dist_estabs), fill = "grey", size = 5, shape = 21)
 ```
 
 
@@ -1112,6 +1072,82 @@ state_var <- county_agg %>%
 ```
 
 
+### All Counties and Sectors
+
+```{r}
+all_counties_industries <- final_results_merge %>% 
+  filter(supply_estabs > 0, output_estabs > 0) %>% 
+  mutate(horz_agg = log(output_estabs), 
+         vert_agg = log(supply_estabs)) %>% 
+  normalize(horz_agg) %>% 
+  select(-c(var_mean, var_sd)) %>% 
+  rename(horz_agg_norm = norm_var) %>% 
+  normalize(vert_agg) %>% 
+  select(-c(var_mean, var_sd)) %>% 
+  rename(vert_agg_norm = norm_var) 
+```
+
+```{r}
+all <- all_counties_industries %>% 
+  ggplot() + 
+  geom_point(aes(x = horz_agg_norm, y = vert_agg_norm, fill = naics_3digit_label), shape = 21, size = 3, alpha = 0.9) + 
+    scale_fill_manual(values = emp_ind_vector)+ 
+    guides(fill = "none") + 
+  geom_abline(slope = 1, intercept = 0) + 
+  geom_abline(slope = 1, intercept = 1, linetype = 2) + geom_abline(slope = 1, intercept = -1, linetype = 2) + 
+   labs(x = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, County X Industry", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, County X Industry") + 
+  theme_bw() + 
+  axis_theme
+```
+
+
+```{r}
+all + facet_wrap(~naics_3digit_label)
+```
+
+```{r}
+corner_inds <- all_counties_industries %>% 
+  filter(ind_code %in% c("324110", "3219A0", "322210", "332114", "332430", "334111", "334413", "334210", "325411", "336992", "336411", "336111"))
+
+corner_cols <- get_col_match(corner_inds)
+
+corner_graph <- corner_inds %>% 
+  mutate(industry_desc = gsub("[[:punct:]]", " ", industry_desc), 
+         industry_desc = case_when(
+           str_detect(industry_desc, "metal") ~ "Metal can & box, light guage", 
+           str_detect(industry_desc, "tank") ~ "Military Tank and Tank Components", 
+           TRUE ~ industry_desc
+         )) %>% 
+  ggplot() + 
+  geom_point(aes(x = horz_agg_norm, y = vert_agg_norm, fill = naics_3digit_label), shape = 21, size = 3, alpha = 0.9) + 
+    scale_fill_manual(values = corner_cols)+ 
+    guides(fill = "none") + 
+  geom_abline(slope = 1, intercept = 0) + 
+  geom_abline(slope = 1, intercept = 1, linetype = 2) + geom_abline(slope = 1, intercept = -1, linetype = 2) + 
+   labs(x = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, County X Industry", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, County X Industry") + 
+  theme_bw() + 
+  axis_theme
+```
+ 
+
+```{r}
+all2 <- final_results_merge1 %>%
+  mutate(horz_agg = log(output_estabs), 
+         vert_agg = log(supply_estabs)) %>% 
+  ggplot() + 
+  geom_point(aes(x = horz_agg, y = vert_agg, fill = naics_3digit_label), shape = 21) + 
+    scale_fill_manual(values = emp_ind_vector)+ 
+    guides(fill = "none")
+```
+
+
+```{r}
+all1 <- all + facet_wrap(~naics_3digit_label)
+
+all2 <- all2 + facet_wrap(~naics_3digit_label)
+```
+
+
 ### Agglomeration against Costs
 
 #### Employment
@@ -1127,7 +1163,7 @@ horz_estabs_comp <- op_horz %>%
     guides(fill = "none", color = "none") +
     labs(y = "Industry Horizontal Agglomeration Z-Score\nEstablishments, Over Counties", x = "Log Total Employment in Industry") + 
     scale_fill_manual(values = emp_ind_vector) + 
-  ylim(c(-3.5, 3)) + 
+  ylim(c(-5, 4.5)) + 
     theme_bw() + 
     axis_theme
 ```
@@ -1143,7 +1179,7 @@ vert_estabs_comp <- vert_agg %>%
     guides(fill = "none", color = "none") +
     labs(y = "Industry Vertical Agglomeraiton Z-Score\nEstablishments, Over Counties", x = "Log Total Employment in Industry") + 
     scale_fill_manual(values = emp_ind_vector) + 
-  ylim(c(-3.5, 3)) + 
+    ylim(c(-5, 4.5)) + 
     theme_bw() + 
     axis_theme
 ```
@@ -1177,12 +1213,12 @@ horz_rd <- op_horz %>%
   left_join(rd_output) %>% 
   mutate(rd_sup_perc = log(rd_sup_perc)) %>% 
   normalize(rd_sup_perc) %>% 
-  ggplot(aes(x = norm_var, y = horz_dist_estabs)) + 
+  ggplot(aes(x = rd_sup_perc, y = horz_dist_estabs, text = industry_desc)) + 
   geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector) + 
   guides(fill = "none")  + 
-  ylim(c(-4.7, 4.05)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
   labs(x = "Industry R&D Intensity Z-Score", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
@@ -1193,15 +1229,19 @@ vert_rd <- vert_agg %>%
   left_join(rd_output) %>% 
   mutate(rd_sup_perc = log(rd_sup_perc)) %>% 
   normalize(rd_sup_perc) %>% 
-  ggplot(aes(x = norm_var, y = vert_dist_estabs)) + 
+  ggplot(aes(x = norm_var, y = vert_dist_estabs, text = industry_desc)) + 
   geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector) + 
   guides(fill = "none")  + 
-  ylim(c(-4.7, 4.05)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
   labs(x = "Industry R&D Intensity Z-Score", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
+```
+
+```{r}
+horz_rd + vert_rd
 ```
 
 
@@ -1278,7 +1318,8 @@ mat_intensity <- manf_inputs %>%
   mutate(across(.cols = c(mats_manf, manf_only, mats_manf_dist), ~ sum(., na.rm = TRUE))) %>% 
   mutate(across(.cols = c(mats_manf, manf_only, mats_manf_dist), ~ ./intermediary_inputs)) %>% 
   select(ind_code = industry_code, industry_desc, mats_manf, manf_only, mats_manf_dist, intermediary_inputs, naics_3digit_label) %>% 
-  distinct() 
+  distinct() %>% 
+  normalize(manf_only) %>% rename(manf_z = norm_var) %>% select(-c(var_mean, var_sd))
   
 ```
 
@@ -1287,30 +1328,94 @@ mat_intensity <- manf_inputs %>%
 ```{r}
 horz_mat <- op_horz %>% 
   left_join(mat_intensity) %>% 
-  ggplot(aes(x = manf_only, y = horz_dist_estabs)) + 
+  ggplot(aes(x = manf_only, y = horz_dist_estabs, text = industry_desc)) + 
   geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-4.7, 4.05)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
-  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermeidate Inputs", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermediate Inputs", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
 ```
 
 ```{r}
 vert_mat <- vert_agg %>% 
   left_join(mat_intensity) %>% 
-  ggplot(aes(x = manf_only, y = vert_dist_estabs)) + 
+  ggplot(aes(x = manf_only, y = vert_dist_estabs, text = industry_desc)) + 
   geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) + 
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-4.7, 4.05)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
-  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermeidate Inputs", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermediate Inputs", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
 ```
+
+```{r}
+horz_mat1 <- op_horz %>% 
+  left_join(mat_intensity) %>% 
+  ggplot(aes(x = mats_manf, y = horz_dist_estabs)) + 
+  geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
+  geom_smooth(color = "dark grey", method = "lm") + 
+  scale_fill_manual(values = emp_ind_vector)+ 
+  guides(fill = "none") + 
+  ylim(c(-5, 4.1)) + 
+  theme_bw() + 
+  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermediate Inputs", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  axis_theme
+```
+
+```{r}
+vert_mat1 <- vert_agg %>% 
+  left_join(mat_intensity) %>% 
+  ggplot(aes(x = mats_manf, y = vert_dist_estabs)) + 
+  geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) + 
+  geom_smooth(color = "dark grey", method = "lm") + 
+  scale_fill_manual(values = emp_ind_vector)+ 
+  guides(fill = "none") + 
+  ylim(c(-5, 4.1)) + 
+  theme_bw() + 
+  labs(x = "Industry Manufactured Inputs Share of \nTotal Value of Intermediate Inputs", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  axis_theme
+```
+
+#### Value Added
+
+```{r}
+val_add <- vert_agg %>% 
+  left_join(op_horz) %>% 
+  left_join(ind_agg %>% rename(ind_code = industry_code)) %>% 
+  mutate(log_val = log(value_added))
+```
+
+```{r}
+horz_add <- val_add %>% 
+  ggplot(aes(x = log_val, y = horz_dist_estabs)) + 
+  geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
+  geom_smooth(color = "dark grey", method = "lm") + 
+  scale_fill_manual(values = emp_ind_vector)+ 
+  guides(fill = "none") + 
+  ylim(c(-5, 4.1)) + 
+  theme_bw() + 
+  labs(x = "Log of Value Added \n Industry Level", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  axis_theme
+```
+
+```{r}
+vert_add <- val_add %>% 
+  ggplot(aes(x = log_val, y = vert_dist_estabs)) + 
+  geom_point(aes(fill = naics_3digit_label), shape = 21, size = 3) +
+  geom_smooth(color = "dark grey", method = "lm") + 
+  scale_fill_manual(values = emp_ind_vector)+ 
+  guides(fill = "none") + 
+  ylim(c(-5, 4.1)) + 
+  theme_bw() + 
+  labs(x = "Log of Value Added \n Industry Level", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  axis_theme
+```
+
 
 #### Import Intensity
 
@@ -1332,9 +1437,9 @@ horz_imp <- op_horz %>%
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-3.5, 3)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
-  labs(x = "Z-Score: Industry Import Share of \nTotal Value of Intermeidate Inputs", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  labs(x = "Z-Score: Industry Import Share of \nTotal Value of Intermediate Inputs", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
 ```
 
@@ -1346,11 +1451,156 @@ vert_imp <- vert_agg %>%
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-3.5, 3)) + 
+  ylim(c(-5, 4.1)) + 
   theme_bw() + 
-  labs(x = "Z-Score: Industry Import Share of \nTotal Value of Intermeidate Inputs", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  labs(x = "Z-Score: Industry Import Share of \nTotal Value of Intermediate Inputs", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
 ```
+
+#### Correlations
+
+```{r}
+final_data_large <- final_results_merge %>% 
+  filter(output_estabs > 0, supply_estabs > 0) %>%  
+  mutate(horz_agg = log(output_estabs), vert_agg = log(supply_estabs)) %>% 
+  normalize(horz_agg) %>% 
+  select(-c(var_mean, var_sd)) %>% rename(horz_z = norm_var) %>% 
+  normalize(vert_agg) %>% 
+  select(-c(var_mean, var_sd)) %>% rename(vert_z = norm_var) %>% 
+  left_join(rd_output) %>% 
+  mutate(rd_sup_perc = log(rd_sup_perc)) %>% 
+  normalize(rd_sup_perc) %>% rename(rd_z = norm_var) %>% 
+  select(-c(var_mean, var_sd)) %>%  left_join(mat_intensity) %>% 
+  left_join(us_pop %>% filter(variable == "DENSITY")) %>% 
+  left_join(ind_agg %>% rename(ind_code = industry_code)) 
+```
+
+
+```{r}
+final_data <- op_horz %>% left_join(vert_agg) %>% left_join(final_results_merge %>% select(ind_code, ind_tot_emp_nat, ind_tot_estab_nat) %>% distinct()) %>%  left_join(rd_output) %>% mutate(log_rd_sup = log(rd_sup_perc)) %>% normalize(log_rd_sup) %>% rename(rd_z = norm_var) %>% select(-c(var_mean, var_sd)) %>%  left_join(mat_intensity) 
+```
+
+```{r}
+final_data_all <- final_data_large %>% left_join(cbp_all) %>% mutate(s_ri_estabs = county_ind_tot_estabs / county_tot_estabs, 
+                                                   s_ri_emp = county_ind_tot_emp / county_tot_emp) %>% 
+    #REST OF EGK MEASURES (X_RI)
+    group_by(NAME) %>% 
+    mutate(x_r_estabs = mean(s_ri_estabs, na.rm = TRUE),
+           x_r_emp = mean(s_ri_emp, na.rm = TRUE)) %>% 
+    ungroup() %>% 
+  mutate(log_val = log(value_added))
+```
+
+
+```{r}
+horz_rd_lm_long <- lm(horz_z ~ log(ind_tot_emp_nat) + log(x_r_emp)  + rd_z + manf_only, data = final_data_all)
+```
+
+```{r}
+vert_rd_lm_long <- lm(vert_z ~ log(ind_tot_emp_nat) + log(x_r_emp) + rd_z + manf_only, data = final_data_all)
+```
+
+```{r}
+vert_lm_cont_ind_county <- lm(vert_z ~ log(ind_tot_emp_nat) +  log(x_r_emp) + rd_z + manf_z + horz_z, data = final_data_all)
+```
+
+```{r}
+horz_lm_cont_ind_county <- lm(horz_z ~ log(ind_tot_emp_nat) + log(x_r_emp) + rd_z + manf_z + vert_z, data = final_data_all)
+```
+
+```{r}
+export_summs(horz_lm_cont_ind_county, vert_lm_cont_ind_county)
+```
+
+
+```{r}
+vert_lm_cont_ind_val <- lm(vert_z ~ log(ind_tot_emp_nat) +  log(x_r_emp) + rd_z + log(manf_only) + horz_z + log_val, data = final_data_all)
+```
+
+```{r}
+horz_lm_cont_ind_val <- lm(horz_z ~ log(ind_tot_emp_nat) + log(x_r_emp) + rd_z + log(manf_only) + vert_z + log_val, data = final_data_all)
+```
+
+```{r}
+vert_lm_cont_ind_val_int <- lm(vert_z ~ log(ind_tot_emp_nat) +  log(x_r_emp) + rd_z + log(manf_only) + horz_z + log_val + log_val*log(manf_only), data = final_data_all)
+```
+
+```{r}
+horz_lm_cont_ind_val_int <- lm(horz_z ~ log(ind_tot_emp_nat) + log(x_r_emp) + rd_z + log(manf_only) + vert_z + log_val + log_val*log(manf_only), data = final_data_all)
+```
+
+```{r}
+export_summs(horz_rd_lm_long, vert_rd_lm_long, horz_lm_cont_ind_county, vert_lm_cont_ind_county)
+
+```
+
+
+```{r}
+export_summs(horz_lm_cont_ind_val, vert_lm_cont_ind_val, horz_lm_cont_ind_val_int, vert_lm_cont_ind_val_int)
+```
+
+
+```{r}
+vert_lm <- lm(vert_dist_estabs ~ log(ind_tot_emp_nat)  + rd_z + manf_only, data = final_data)
+```
+
+```{r}
+horz_lm <- lm(horz_dist_estabs ~ log(ind_tot_emp_nat)  + rd_z + manf_only, data = final_data)
+```
+
+```{r}
+vert_lm_cont <- lm(vert_dist_estabs ~ log(ind_tot_emp_nat)  + rd_z + manf_only + horz_dist_estabs, data = final_data)
+```
+
+```{r}
+horz_lm_cont <- lm(horz_dist_estabs ~ log(ind_tot_emp_nat)  + rd_z + manf_only + vert_dist_estabs, data = final_data)
+```
+
+```{r}
+export_summs(horz_lm, vert_lm, horz_lm_cont, vert_lm_cont)
+```
+
+
+
+```{r}
+rd_dist <- final_data %>% 
+  ggplot(aes(x = rd_z, y = reorder(naics_3digit_label, rd_z), fill = naics_3digit_label)) + 
+  geom_density_ridges() + 
+  geom_point(shape = 21) +
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "Industry R&D Intensity Z-Score", y = "NAICS 3-Digit Label") +
+  theme_bw() +
+  axis_theme + 
+  theme(axis.title.x = element_text(size = 12))
+```
+
+```{r}
+mat_dist <- final_data %>% 
+  ggplot(aes(x = manf_only, y = reorder(naics_3digit_label, rd_z), fill = naics_3digit_label)) + 
+  geom_density_ridges() + 
+  geom_point(shape = 21) +
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "Share of Value of Intermediate Inputs\n from Manufacturing", y = "") +
+  theme_bw() +
+  theme(axis.text.y = element_blank(), 
+        axis.title.x = element_text(size = 12))
+```
+
+```{r}
+emp_dist <- final_data %>% 
+  ggplot(aes(x = log(ind_tot_emp_nat), y = reorder(naics_3digit_label, rd_z), fill = naics_3digit_label)) + 
+  geom_density_ridges() + 
+  geom_point(shape = 21) +
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "Log Industry Total Employment (2019)", y = "") +
+  theme_bw() +
+  theme(axis.text.y = element_blank(), 
+        axis.title.x = element_text(size = 12))
+```
+
 
 
 #### R&D Intensity / Manf Intensity Ratio 
@@ -1396,7 +1646,7 @@ horz_pay <- op_horz %>%
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-3.5, 3)) + 
+  ylim(c(-5, 4.5)) + 
   theme_bw() + 
   labs(x = "Industry Log Annual Average Pay, Z-Score", y = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   axis_theme
@@ -1410,9 +1660,32 @@ vert_pay <- vert_agg %>%
   geom_smooth(color = "dark grey", method = "lm") + 
   scale_fill_manual(values = emp_ind_vector)+ 
   guides(fill = "none") + 
-  ylim(c(-3.5, 3)) + 
+  ylim(c(-5, 4.5)) + 
   theme_bw() + 
   labs(x = "Industry Log Annual Average Pay, Z-Score", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
+  axis_theme
+```
+## R&D Intensity V. Materials Intensity
+
+```{r}
+trim_data <- final_data %>% 
+  left_join(ind_crosswalk) %>% 
+  filter(ind_code %in% c(detailed_ind_list, "327320")) %>% 
+  select(rd_z, manf_only, ind_code, naics_3digit_label, industry_desc) %>% 
+  distinct()
+```
+
+```{r}
+rd_mats <- final_data %>% 
+  left_join(ind_crosswalk) %>% 
+  mutate(log_manf = log(manf_only)) %>% 
+  normalize(log_manf) %>% 
+  ggplot(aes(x = rd_z, y = norm_var, label = industry_desc)) + 
+  geom_point(aes(fill = naics_3digit_label), shape = 21, size = 5, alpha = 0.9) + 
+  scale_fill_manual(values = emp_ind_vector) + 
+  guides(fill = "none") + 
+  labs(x = "RD Intensity Z-Score", y = "Manufactured Share of Intermediate Inputs") + 
+  theme_bw() + 
   axis_theme
 ```
 
@@ -1439,22 +1712,21 @@ all_agg <- left_join(horz_all, vert_all)
 ```{r}
 
 quad_inds <- all_agg %>% 
-  filter(ind_code %in% c("334413", "335911", "311910", "336411")) 
+  filter(ind_code %in% detailed_ind_list) 
 
 quad_ind_cols <- get_col_match(quad_inds) 
 
 focus_ind_counties <- quad_inds %>% 
   left_join(final_results_merge %>% select(ind_code, NAME, ind_share_emp )) %>% 
   mutate(state = str_split_i(NAME, ", ", i = 2)) %>% 
-  mutate(
-         state = case_when(state %in% c("California", "Texas", "Idaho", "Washington", "Connecticut", "Michigan", "Massachusetts", "Oregon", "Pennsylvania", "Illinois", "Ohio", "Wisconsin") ~ state)) %>% 
   ggplot(aes(text = NAME)) + 
-  geom_point(aes(x = horz_dist, vert_dist, fill = state, size = log(ind_share_emp)), shape = 21) + 
+  geom_point(aes(x = horz_dist, vert_dist, fill = naics_3digit_label), shape = 21, size = 5) + 
+  scale_fill_manual(values = quad_ind_cols) + 
+  guides(fill = "none", size = "none") +
   geom_vline(xintercept = 0) + 
   geom_hline(yintercept = 0) + 
-  ylim(c(-2, 3)) + 
-  xlim(c(-2, 3)) + 
-  
+  ylim(c(-5, 4.)) + 
+  xlim(c(-5, 4)) + 
   theme_bw() + 
   labs(x = "Industry Output Horizontal Agglomeration Z-Score\nEstablishments, Mean Over Counties", y = "Industry Vertical Agglomeration Z-Score\nEstablishments, Mean Over Counties") + 
   facet_wrap(~factor(industry_desc, levels = c("Aircraft.manufacturing", "Storage.battery.manufacturing", "Snack.food.manufacturing", "Semiconductor.and.related.device.manufacturing"))) + 
@@ -1463,7 +1735,13 @@ focus_ind_counties <- quad_inds %>%
 ```
 
 ```{r}
-focus_ind_counties + geom_point(data = focus_sector_var %>% filter(ind_code %in% detailed_ind_list), aes(x = horz_dist_estabs, y = vert_dist_estabs), fill = "grey", size = 5, shape = 21)
+all + facet_wrap(~naics_3digit_label)
+```
+
+
+
+```{r}
+focus_means <- focus_ind_counties + geom_point(data = focus_sector_var %>% filter(ind_code %in% detailed_ind_list) %>% left_join(final_results_merge %>% select(ind_code, NAME, ind_share_emp)), aes(x = horz_dist_estabs, y = vert_dist_estabs), fill = "grey", shape = 21, size = 5) 
 ```
 
 
@@ -1471,7 +1749,7 @@ We can also look at county level agglomeration across the counties that these in
 
 ```{r}
 quad_counties <- final_results_merge %>%
-  filter(ind_code %in% c("334413", "335911", "311910", "336411")) %>% 
+  filter(ind_code %in% detailed_ind_list) %>% 
   select(NAME, industry_desc, ind_code) %>% 
   distinct()
 ```
@@ -1488,6 +1766,42 @@ get_counties <- function(data, industry){
   
 }
 ```
+
+### Semiconductors
+
+
+```{r}
+semi_counties <- all_agg %>% 
+  filter(ind_code %in% c("334413")) %>% 
+  mutate(semi_horz = mean(horz_dist), 
+         semi_vert = mean(vert_dist))
+```
+
+```{r}
+focus_counties <- c("Maricopa County, Arizona", "Washington County, Oregon", "Dallas County, Texas")
+```
+
+```{r}
+semi_col <- get_col_match(semi_counties)
+```
+
+
+```{r}
+semi_graph <- semi_counties %>% 
+  ggplot(aes(text = NAME)) + 
+  geom_point(aes(x = horz_dist, vert_dist), fill = semi_col, shape = 21, size = 5) + 
+  geom_label_repel(data = semi_counties %>% filter(NAME %in% focus_counties), aes(x = horz_dist, vert_dist, label = NAME), fill = "lightgrey", size = 5) + 
+  geom_point(data = semi_counties %>% filter(NAME %in% focus_counties), aes(x = horz_dist, vert_dist), fill = "lightgrey", shape = 21, size = 5) + 
+  # geom_vline(xintercept = semi_counties$semi_horz, color = semi_col) + 
+  # geom_hline(yintercept = semi_counties$semi_vert, color = semi_col) + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  labs(x = "County-Industry Horizontal Agglomeration Z-Score", y = "County-Industry Vertical Agglomeration Z-Score") + 
+  theme_bw() + 
+  axis_theme
+  
+```
+
 
 County Maps: 
 
@@ -1508,8 +1822,8 @@ semi_map <- map_function(county_agg_map_df %>%
 ```
 
 ```{r}
-snacks_map <- map_function(county_agg_map_df %>% 
-               filter(NAME %in% get_counties(final_results_merge, "311910")))
+concrete_map <- map_function(county_agg_map_df %>% 
+               filter(NAME %in% get_counties(final_results_merge, "327320")))
 ```
 
 ```{r}
@@ -1665,6 +1979,7 @@ We then look at R&D
 
 ```{r}
 rd_output %>% 
+  mutate(rd_sup_perc = 100*rd_sup_perc) %>% 
   summ_create(rd_sup_perc) 
 ```
 
