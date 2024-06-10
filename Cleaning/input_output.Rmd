@@ -1586,6 +1586,8 @@ Here, we create two separate dataframes. The first indexes the intensity of scie
 manf_rd <- manf_supply %>% 
   filter(commodity_desc == "Scientific research and development services", value_num > 0) %>% 
   select(industry_code, industry_desc, value_num, naics_3digit_label, total_commodity_output, total_industry_supply) %>% 
+  left_join(ind_agg) %>% 
+  left_join(sup_com_agg) %>% 
   mutate(rd_sup_perc = value_num / total_industry_supply, #percent of total industry supply that is scientific R&D
          rd_com_perc = value_num / total_commodity_output)  #percent of total R&D that comes from a specific industry
 ```

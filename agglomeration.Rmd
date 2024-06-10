@@ -844,17 +844,42 @@ ggplot() +
 
 #### Maps
 
+
+```{r}
+#COUNTY ANALYSIS, NORMALIZATION AGAINST ALL COUNTY MEANS
+county_sum_data <- function(data, agg_var, var_mean, var_sd){
+  data %>% 
+    filter({{ agg_var }} > 0) %>% 
+    group_by(NAME) %>% 
+    reframe(agg_var_mean = mean(log({{ agg_var }}), na.rm = TRUE),
+            agg_var_sd = mean(sd({{ agg_var }}), na.rm = TRUE), 
+            agg_var_sd = if_else(is.na(agg_var_sd), 0, agg_var_sd), 
+            agg_max = max(log({{ agg_var }}), na.rm = TRUE), 
+            agg_ind = case_when(log({{ agg_var }}) == agg_max ~ ind_code), 
+            state_abbr) %>% 
+    distinct() %>% 
+    filter(!is.na(agg_ind)) %>% 
+    ungroup() %>% 
+    mutate(mean_agg = mean(agg_var_mean, na.rm = TRUE), 
+           sd_agg = sd(agg_var_mean, na.rm = TRUE), 
+           agg_max = (agg_max - mean_agg) / sd_agg, 
+           mean_dist = (agg_var_mean - mean_agg) / sd_agg) %>% 
+    select(-c(mean_agg))
+} 
+```
+
+
 ```{r}
 county_horz_agg_df <- final_results_merge %>% 
-  county_sum_data(output_estabs, output_estabs_mean, output_estabs_sd) %>% 
-  rename(horz_estabs_mean = agg_var_mean, horz_estabs_sd = agg_var_sd, horz_max = agg_max, horz_dist = mean_dist, sd_horz = sd_agg, horz_ind = agg_ind)
+  county_sum_data(output_emp, output_emp_mean, output_emp_sd) %>% 
+  rename(horz_emp_mean = agg_var_mean, horz_emp_sd = agg_var_sd, horz_max = agg_max, horz_dist = mean_dist, sd_horz = sd_agg, horz_ind = agg_ind)
 
 county_vert_agg_df <- final_results_merge %>% 
-  county_sum_data(supply_estabs, supply_estabs_mean, supply_estabs_sd) %>% 
-  rename(vert_estabs_mean = agg_var_mean, vert_estabs_sd = agg_var_sd, vert_max = agg_max, vert_dist = mean_dist, sd_vert = sd_agg, vert_ind = agg_ind)
+  county_sum_data(supply_emp, supply_emp_mean, supply_emp_sd) %>% 
+  rename(vert_emp_mean = agg_var_mean, vert_emp_sd = agg_var_sd, vert_max = agg_max, vert_dist = mean_dist, sd_vert = sd_agg, vert_ind = agg_ind)
 
 county_agg <- full_join(county_horz_agg_df, county_vert_agg_df) %>% 
-  left_join(final_results_merge %>% select(area_fips, NAME) %>% distinct()) %>% filter(!is.na(horz_estabs_mean), !is.na(vert_estabs_mean))
+  left_join(final_results_merge %>% select(area_fips, NAME) %>% distinct()) %>% filter(!is.na(horz_emp_mean), !is.na(vert_estabs_mean))
 ```
 
 
@@ -880,7 +905,7 @@ county_quad <- county_agg %>%
 ```
 
 ```{r}
-quad_ranges <- county_quad %>% group_by(agg_quad) %>% reframe(min_dist = min(agg_dist), max_dist = max(agg_dist))
+quad_ranges <- county_quad %>% group_by(agg_quad) %>% reframe(min_dist = round(min(agg_dist),2), max_dist = round(max(agg_dist), 2))
 
 quad_ranges
 ```
@@ -896,18 +921,18 @@ county_agg_map_df <- county_quad %>%
 all_agg_map <- county_agg_map_df %>% 
   ggplot(aes(long, lat, group = group)) + 
   geom_polygon(data = urbnmapr::states, colour = "black", fill = "darkgrey") + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "General Agglomeration"), aes(fill = agg_dist),  color = "#6BC506", show.legend = FALSE) +
+  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "General Agglomeration"), aes(fill = agg_dist),  color = "#012898", show.legend = FALSE) +
   coord_map(projection = "albers", lat0 = 39, lat1 = 45) + 
-  scale_fill_gradient(low = "#f6f1eb", high = "#6BC506", limits =  c(0, 5)) + 
+  scale_fill_gradient(low = "#f6f1eb", high = "#012898", limits =  c(0.03, 4.43)) + 
   new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Supplier Agglomeration"), aes(fill = agg_dist), color = "#8F04CB", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#8F04CB", limits =  c(0, 2.05)) + 
+  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Supplier Agglomeration"), aes(fill = agg_dist), color = "#E3A902", show.legend = FALSE) +
+  scale_fill_gradient(low = "#f6f1eb", high = "#E3A902", limits =  c(0.02, 1.80)) + 
   new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Peer Agglomeration"), aes(fill = agg_dist),  color = "#049BCB", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#049BCB", limits =  c(0, 4.1)) + 
+  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Peer Agglomeration"), aes(fill = agg_dist),  color = "#019826", show.legend = FALSE) +
+  scale_fill_gradient(low = "#f6f1eb", high = "#019826", limits =  c(0.05, 3.99)) + 
   new_scale_fill() + 
-  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Low Agglomeration"), aes(fill = agg_dist),  color = "#CB5804", show.legend = FALSE) +
-  scale_fill_gradient(low = "#f6f1eb", high = "#CB5804", limits =  c(0, 4.2)) + 
+  geom_polygon(data = county_agg_map_df %>% filter(agg_quad == "Low Agglomeration"), aes(fill = agg_dist),  color = "#8A836D", show.legend = FALSE) +
+  scale_fill_gradient(low = "#f6f1eb", high = "#8A836D", limits =  c(0.01, 5.91)) +  
   theme_map() 
   
 ```
