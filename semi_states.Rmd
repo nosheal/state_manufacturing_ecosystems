@@ -1,0 +1,991 @@
+---
+title: "SEDE Semiconductors"
+author: "Nikhil Kalathil"
+date: "2024-09-13"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warnings = FALSE)
+```
+
+```{r, include = FALSE}
+#Libraries
+library(tigris)
+library(tidyverse)
+library(here)
+library(leaflet)
+library(ggrepel)
+library(RColorBrewer)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+library(janitor)
+library(geofacet)
+library(jsonlite)
+library(ggridges)
+library(sf)
+library(here)
+library(patchwork)
+library(plotly)
+library(leaflet.extras)
+library(units)
+library(jtools)
+library(urbnmapr)
+library(DescTools)
+
+
+set.seed(37)
+title_theme <- theme(axis.text = element_text(size = 14), 
+        axis.title = element_text(size = 18), 
+        title = element_text(size = 20))
+
+axis_theme <- theme(axis.text = element_text(size = 10), 
+        axis.title = element_text(size = 18), 
+         strip.text.x = element_text(size = 16))
+```
+
+```{r, include = FALSE}
+#Area Crosswalks
+area_codes <- readRDS(here("State Data/area_crosswalk.RDS")) %>% 
+  mutate(area_title = str_remove(area_title, " -- Statewide")) %>% 
+  mutate(area_fips = case_when(
+    nchar(area_fips) == 4 ~ paste("0", area_fips, sep = ""), 
+    TRUE ~ area_fips
+  ))
+
+states <- data.frame(state_abbr = state.abb, area_title = state.name)
+
+area_codes <- left_join(area_codes, states) %>% 
+  mutate(state_abbr = case_when(
+    area_title == "District of Columbia" ~ "DC",
+    area_title == "Puerto Rico" ~ "PR",
+    TRUE ~ state_abbr))
+```
+
+
+```{r}
+ExpandColorsLIGHT <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#FFFFFF"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+
+```{r}
+ExpandColorsDARK <- function(colors, n, steps = 11){
+  if(n <= steps){
+    suppressWarnings({
+      sapply(colors, function(x){colorRampPalette(c(x, "#000000"))(steps)}) %>% 
+        as.data.frame() %>% 
+        filter(row_number() <= n) %>% 
+        gather(key = original.color, value = expanded.color)
+    })
+  }else{
+    warning("Select n < steps!")
+  }
+}
+```
+
+```{r, include = FALSE}
+#Map Data
+county_sf <- counties(cb = TRUE) %>% 
+  shift_geometry(position = "outside")
+states_sf <- states(cb = TRUE, resolution = "20m") %>%
+  shift_geometry(position = "outside")
+```
+
+```{r, include = FALSE}
+#Change projection of data for leaflet
+states_leaflet <- states_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+
+counties_leaflet <- county_sf %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84') 
+```
+
+```{r, include = FALSE}
+#Convert county data to a table
+county_data <- counties_leaflet %>% 
+  as_tibble() %>% 
+  select(STATEFP, COUNTYFP, AFFGEOID) %>% 
+  mutate(area_fips = paste(STATEFP, COUNTYFP, sep = ""), 
+         st = as.numeric(STATEFP))
+```
+
+
+```{r, include = FALSE}
+#Get center of each county
+county_centers <- counties_leaflet %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  st_centroid() %>% 
+  sf::st_transform('+proj=longlat +datum=WGS84')
+```
+
+```{r, include = FALSE}
+#Load Existing Data
+qcew_3digits <- readRDS(here("State Data/qcew_3digit.RDS")) %>% 
+  mutate(industry_desc = substring(industry_title, 11))
+```
+
+```{r, include = FALSE}
+#Simplify to get industry codes
+ind_3digit <- qcew_3digits %>% 
+  select(naics_3digit = ind_code, naics_3digit_label = industry_desc) %>% 
+  distinct() %>% 
+  arrange(naics_3digit_label)
+```
+
+```{r, include = FALSE}
+#Define colors 
+emp_ind_vector <- c(brewer.pal(9, "Greys")[4], "#cf4633", "#BEAED4", "#a8e4a0", "#FDBF6F",  "#386CB0", "#FB8072", brewer.pal(9, "Greys")[3], brewer.pal(9, "Greys")[8], "#80B1D3", "#F0027F",  "#4DAF4A", "#F1E2CC", "#6A3D9A", "#E78AC3", "#CBD5E8", "#666666", brewer.pal(9, "Greys")[5],  brewer.pal(9, "Greys")[6], "#A65628", brewer.pal(9, "Greys")[7])
+```
+
+```{r}
+#create data frame mapping colors to industries
+col_map <- data.frame(ind_3digit$naics_3digit_label, emp_ind_vector)
+```
+
+```{r}
+rd_col <- data.frame(ind_3digit.naics_3digit_label = "Scientific R&D", emp_ind_vector = "#8DD3C7")
+```
+
+```{r}
+col_map <- bind_rows(col_map, rd_col)
+```
+
+
+```{r}
+# Map 3-digit NAICS to 3-digit Colors
+get_col_vec <- function(data){ 
+  data %>% 
+    select(naics_3digit_label) %>% 
+    distinct() %>% 
+    unlist()
+  }
+```
+
+```{r}
+#Function to get appropriate 3-digit colors
+get_col_match <- function(data){ 
+  
+ col_vec <- get_col_vec(data)
+ 
+ col_out <- col_map %>% 
+   filter(ind_3digit.naics_3digit_label %in% col_vec) %>% 
+   select(emp_ind_vector) %>% 
+   unlist() %>% 
+   unname()
+ 
+  return(col_out)
+  
+}
+```
+
+```{r}
+#Get County GEOIDS and crosswalks
+cbp_geoid <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  mutate(area_fips = str_sub(GEO_ID, -5)) %>% 
+  select(GEO_ID, NAME, area_fips) %>% distinct()
+
+cbp_empzes <- read.csv(here("County Data/5_digit_naics_2019.csv")) %>% 
+  select(EMPSZES_LABEL, EMPSZES) %>% 
+  distinct()
+
+cbp_io <- readRDS(here("Input Output Data/cbp_manf_IO_crosswalk.RDS")) 
+```
+
+
+```{r, include = FALSE}
+#read county-level manufacturing data
+cbp_2019 <- read.csv(here("County Data/6_digit_naics_CBP.csv")) %>% 
+  left_join(cbp_geoid) %>% 
+  left_join(county_data) %>% 
+  left_join(area_codes %>% select(st, state_abbr)) %>% 
+  mutate(across(.cols = c(EMP, ESTAB, PAYANN), ~ gsub(",", "", .)),
+    emp_num = as.numeric(EMP), 
+    ESTAB = as.numeric(ESTAB), 
+    mean_pay = as.numeric(PAYANN)
+    ) %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE)) %>% 
+  left_join(cbp_empzes)
+```
+
+
+```{r}
+cbp_2019_all <- read.csv(here("County Data/total_naics_2019.csv")) %>% 
+  mutate(across(.cols = c(EMP, ESTAB, PAYANN), ~ gsub(",", "", .)),
+    tot_emp = as.numeric(EMP), 
+    tot_estab = as.numeric(ESTAB), 
+    tot_mean_earnings = as.numeric(PAYANN)) %>% 
+  filter(str_detect(NAME, "Mariana", negate = TRUE), EMPSZES_LABEL == "All establishments") %>%
+  select(-c(NAICS2017, NAICS2017_LABEL, LFO_LABEL, EMPSZES_LABEL, ESTAB, PAYANN, EMP))
+```
+
+```{r}
+cbp_all <- cbp_2019_all %>% select(county_tot_emp = tot_emp, county_tot_estabs = tot_estab, NAME)
+```
+
+```{r}
+cbp_pay <- cbp_2019 %>% 
+  filter(EMPSZES == 1) %>% 
+  left_join(cbp_io) %>% 
+  ungroup() %>% 
+  group_by(ind_code) %>% 
+  reframe(ind_mean_pay = mean(mean_pay)) %>% 
+  ungroup() 
+```
+
+
+```{r}
+#read Input Output Data
+use_table_final <- readRDS(here("Input Output Data/use_table_final.RDS"))
+sup_com_agg <- readRDS(here("Input Output Data/sup_com_agg.RDS"))
+ind_agg <- readRDS(here("Input Output Data/ind_agg.RDS"))
+com_agg <- readRDS(here("Input Output Data/com_agg.RDS"))
+supply_table_final <- readRDS(here("Input Output Data/supply_table_final.RDS"))
+```
+
+```{r}
+ind_crosswalk <- readRDS(here("Input Output Data/ind_crosswalk.RDS"))
+```
+
+
+
+```{r}
+#Read NAICS Codes
+naics_codes <- read.csv(here("NAICS/naics_codes.csv")) %>% 
+  select(c(2,3))
+
+colnames(naics_codes) <- c("industry_code", "industry_desc")
+```
+
+```{r, include = FALSE}
+naics_2 <- naics_codes %>% 
+  filter(str_length(industry_code) == 2 | industry_code == "31-33") %>% 
+  mutate(industry_code = case_when(
+    industry_code == "31-33" ~ 31.33, 
+    TRUE ~ as.numeric(industry_code)
+  ))
+```
+
+```{r}
+naics_sub <- function(var, num){
+   as.numeric(str_sub({{ var }}, 1, num))
+}
+```
+
+```{r}
+library(tidycensus)
+ us_pop <- get_estimates(geography = "county", product = "population", vintage = 2019)
+```
+
+
+# CBP Data
+
+Direct Codes: 
+
+## Industry Codes
+
+
+```{r}
+semi_naics <- c(334412, 334413, 334416, 334417, 334418, 334419, 333242)
+```
+
+## 2019 Data
+
+```{r}
+semi_2019_cbp <- cbp_2019 %>% 
+  filter(EMPSZES_LABEL == "All establishments",
+    NAICS2017 %in% semi_naics) %>% 
+  left_join(cbp_2019_all) %>% 
+  select(NAICS2017, NAICS2017_LABEL, NAME, emp_num, tot_emp) %>% 
+  mutate(emp_share = emp_num / tot_emp) %>% 
+  group_by(NAICS2017) %>% 
+  mutate(nat_avg_emp = mean(emp_share), 
+         LQ_emp = emp_share/nat_avg_emp)
+ 
+```
+
+
+## 2022 Data 
+
+```{r}
+cbp_all_2022 <- read.csv(here("County Data/naics_2022_all.csv")) %>% 
+   mutate(across(.cols = c(EMP, ESTAB, PAYANN), ~ as.numeric(gsub(",", "", .)))) %>% 
+  select(NAME, YEAR, tot_emp = EMP, tot_estab = ESTAB)
+```
+
+
+```{r}
+semi_2022_cbp <- read.csv(here("County Data/semi_naics_2022.csv")) %>% 
+   mutate(across(.cols = c(EMP, ESTAB, PAYANN), ~ as.numeric(gsub(",", "", .)))) %>%
+  left_join(cbp_all_2022) %>% 
+  select(NAICS2017, NAICS2017_LABEL, NAME, emp_num_2022 = EMP, tot_emp_2022 = tot_emp) %>% 
+  mutate(emp_share_2022 = emp_num_2022 / tot_emp_2022) %>% 
+  group_by(NAICS2017) %>% 
+  mutate(nat_avg_emp_2022 = mean(emp_share_2022), 
+         LQ_emp_2022 = emp_share_2022/nat_avg_emp_2022)
+```
+
+
+## 2019 Analysis
+
+```{r}
+semi_map <- function(industry) { 
+  
+  semi_2019_cbp %>% 
+    filter(NAICS2017 == industry) %>% 
+    left_join(counties %>% mutate(NAME = paste(county_name, state_name, sep = ", "))) %>% 
+    ggplot(aes(long, lat, group = group)) + 
+  geom_polygon(data = urbnmapr::states, colour = "black", fill = "White") + 
+  geom_polygon(aes(fill = LQ_emp, text = NAME), color =  "black") +
+    guides(fill = "none", color = "none") + 
+    scale_fill_distiller(palette = "Spectral") + 
+    scale_color_distiller(palette = "Spectral") + 
+  theme_map() 
+  
+}
+```
+
+```{r}
+get_name <- function(industry){
+  
+  cbp_2019 %>% 
+    filter(NAICS2017 %in% industry) %>% 
+    select(NAICS2017_LABEL) %>%
+    distinct() %>% 
+    mutate(NAICS2017_LABEL = str_remove(NAICS2017_LABEL, " manufacturing")) %>% 
+    unlist() %>% 
+    unname() 
+  
+}
+```
+
+
+```{r}
+semi_1 <- semi_map(semi_naics[1]) + labs(title = get_name(semi_naics[1]))
+semi_2 <- semi_map(semi_naics[2]) + labs(title = get_name(semi_naics[2]))
+semi_3 <- semi_map(semi_naics[3]) + labs(title = get_name(semi_naics[3]))
+semi_4 <- semi_map(semi_naics[4]) + labs(title = get_name(semi_naics[4]))
+semi_5 <- semi_map(semi_naics[5]) + labs(title = get_name(semi_naics[5]))
+semi_6 <- semi_map(semi_naics[6]) + labs(title = get_name(semi_naics[6]))
+semi_7 <- semi_map(semi_naics[7]) + labs(title = get_name(semi_naics[7]))
+```
+
+```{r}
+semiconductor_counties <- (semi_2 + semi_5 + semi_1) / (semi_3 + semi_4 + semi_6)
+```
+
+```{r}
+semi_quad <- (semi_2 + semi_5) / (semi_1 + semi_7)
+```
+
+```{r}
+semi_quad2 <- semi_3 + semi_4 + semi_6
+```
+
+## 2019 - 2022 Change
+
+```{r}
+cbp_focus_ind <- c(334418, 334412, 333242, 334413)
+```
+
+
+```{r}
+focus_states_tight <- c("ID", "OR", "AZ", "TX", "OH")
+```
+
+
+```{r}
+semi_2019_2022 <- semi_2019_cbp %>% 
+  full_join(semi_2022_cbp) %>%
+  mutate(across(c(emp_num, emp_num_2022, LQ_emp, LQ_emp_2022), ~case_when(
+    is.na(.) ~ 0, 
+    TRUE ~ .
+  ))) %>% 
+  mutate(emp_change = (emp_num_2022 - emp_num)/emp_num, 
+         LQ_change = (LQ_emp_2022 - LQ_emp ) / LQ_emp) %>% 
+  mutate(state = str_extract(NAME, "(?<=, ).*"))
+```
+
+```{r}
+entry_exit <- semi_2019_2022 %>% 
+  left_join(states %>% rename(state = area_title)) %>% 
+  filter(NAICS2017 %in% cbp_focus_ind, 
+         emp_num == 0 | emp_num_2022 == 0, state_abbr %in% focus_states_tight) %>% 
+  mutate(emp_diff = emp_num_2022 - emp_num, emp_sign = emp_diff > 0) %>% 
+  ggplot() + 
+  geom_col(aes(x = state, y = emp_diff, fill = emp_sign)) + 
+  guides(fill = "none") + 
+  facet_wrap(~NAICS2017_LABEL) + 
+  theme_bw() + 
+  labs(x = "State", y = "2019 - 2022 Employment Difference") + 
+  axis_theme
+```
+
+
+```{r}
+test <- semi_2019_2022 %>% 
+  left_join(states %>% rename(state = area_title)) %>% 
+  filter(NAICS2017 %in% cbp_focus_ind, state_abbr %in% focus_states_tight) %>% 
+  ggplot() + 
+  geom_label(aes(x = emp_share, y = emp_change, fill = state_abbr, label = state_abbr), size = 5, show.legend = FALSE, alpha= 0.8) +
+  facet_wrap(~NAICS2017_LABEL) + 
+  labs(x = "2019 Employment Share", y = "2019-2022 % Change in Employment") + 
+  scale_fill_brewer(palette = "Dark2") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(legend.position = "top") + 
+  axis_theme
+```
+
+
+
+# DataAxel Companies
+
+```{r}
+semi_axel <- read_xlsx("~/Documents/CMU/Semiconductor_Manufacturing/SemiconductorsDataAxelDataRequest.xlsx")
+```
+
+```{r}
+semi_companies <- semi_axel %>% 
+  select(CONAME, SITE, STADDR, STCITY, STATE, ZIP, STCODE, CNTYCD, CENSUS, BLKGRP, industry_desc = PRMSCD, NAICS_8 = NAICS) %>% 
+  mutate(NAICS_6 = str_sub(NAICS_8, 1, 6))
+  
+```
+
+```{r}
+focus_states <- c("ID", "OR", "AZ", "TX", "FL", "OH")
+```
+
+
+```{r}
+defense_states <- c("CA", "AZ", "MA", "NM", "FL", "GA", "MI", "OH")
+```
+
+```{r}
+semi_naics <- c(334412, 334413, 334416, 334417, 334418, 334419, 333242)
+```
+
+```{r}
+semi_focus <- c(33441302, 33441303, 33441801, 33441203, 33324201, 33441202)
+```
+
+```{r}
+semi_focus_tight <- c(33441302, 33441303, 33324201)
+```
+
+```{r}
+semi_companies %>% 
+  filter(STATE %in% focus_states_tight, 
+         NAICS_8 %in% semi_focus_tight) %>% 
+  mutate(NAICS_8 = factor(NAICS_8, levels = c(33324201, 33441302, 33441303))) %>% 
+  group_by(industry_desc, STATE) %>% 
+  count() %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(STATE, n), y  = n, fill = reorder(industry_desc, n)), color = "black") + 
+  coord_flip() + 
+  theme_bw() + 
+  labs(x = "State", y = "Semiconductor Industry")
+```
+
+# Bloomberg Data
+
+```{r}
+semi_bm <- read.csv("~/Documents/CMU/Semiconductor_Manufacturing/fabs_in_states.csv")
+```
+
+```{r}
+fab_hetero <- semi_bm %>% group_by(State.Province, FabType) %>% count() %>% ggplot() + geom_col(aes(x = n, y = reorder(State.Province, n), fill = FabType), color = "Black") + scale_fill_brewer(palette = "Spectral") + theme_bw() + labs(x = "Number of Facilities", y = "") + axis_theme
+```
+
+```{r}
+semi_bm %>% group_by(State.Province, I.C.) %>% count() %>% ggplot() + geom_col(aes(x = n, y = State.Province, fill = I.C.))
+```
+
+```{r}
+semi_bm %>% filter(!is.na(Planned.or.Curr.Geom..μm.))  %>% 
+  ggplot() +
+  geom_density_ridges2(aes(x = Planned.or.Curr.Geom..μm., y = State.Province ))
+```
+
+```{r}
+semi_bm %>% filter(!is.na(Planned.or.Curr.Geom..μm.))  %>% 
+  group_by(State.Province, Planned.or.Curr.Geom..μm.) %>% 
+  count() %>% 
+  ggplot() +
+  geom_point(aes(x = Planned.or.Curr.Geom..μm., y = n, color = State.Province)) + 
+  facet_wrap(~State.Province)
+```
+# Sketching out the analysis
+
+How do the R&D, import / exporting, and establishment level charactersitics of the semiconductor industry vary across regions? 
+
+3 Data sources: 
+- US CBP / IO Accounts (employment, establishments), (agglomeration)
+- Semi data (fab wafer size, fab type, fab products)
+- DataAxel data (semiconductor company names)
+
+## Read Agglomeration Data
+
+```{r}
+semi_agg <- readRDS(here("semi_agg.RDS")) %>% 
+  filter(NAICS2017 == "334413")
+```
+
+## Get Other Data and Match
+
+Start by matching company names across DataAxel and the bloomberg data.
+
+```{r}
+semi_focus_core <- c(33441302, 33441303)
+```
+
+```{r}
+semi_bm_clean <- semi_bm %>% 
+  select(company = X, city = City, state_name = State.Province, fab_name = Fab.Name, 5, 6, curr_geom = Planned.or.Curr.Geom..μm., fab_capacity = Fab.Capacity..200mm.Equiv., Origin, address = Address, Zip, Website, Probability, Status, project_type = Project.Type, product_type = Prod.Type, prod_type_2 = Product.Type..2., products = Products, tech = Technology, class = I.C., waf_size = Planned.or.Curr.Wafsiz, capacity = Planned.or.Curr.Full.Cap., start_year = Start.Year.Initial, fac_type = Project.Type.Core, notes = Fab.Comment) %>% 
+  filter(company != "") %>% 
+  filter(start_year < 2023)
+```
+
+```{r}
+semi_companies_clean <- semi_companies %>% 
+  select(company = CONAME, address = STADDR, city = STCITY, state_abbr = STATE, Zip = ZIP, state_fips = STCODE, county_fips = CNTYCD, census_tract = CENSUS, industry_desc, NAICS_8, NAICS_6) %>% 
+  filter(state_abbr %in% focus_states)
+```
+
+```{r}
+semi_bm_clean %>% 
+  group_by(company, city, state_name, address) %>% 
+  count() %>% 
+  view()
+```
+
+
+```{r}
+semi_companies_match <- semi_companies_clean[3]
+```
+
+```{r}
+find_comp <- function(i, data){
+  
+  df <- data
+  
+  co_name <- df$company[i] 
+  
+  city_name <- df$city[i]
+  
+  df_store <- semi_companies_clean %>% 
+    filter(str_detect(city, city_name)) %>% 
+    mutate(co_match = case_when(
+      str_detect(tolower(company), tolower(co_name)) ~ 1
+    )) %>% 
+    select(co_match, everything()) %>%
+    filter(co_match == 1)
+
+  
+  if (nrow(df_store) == 0) { 
+    return(co_name)}
+  
+  else { 
+    return(df_store)}
+
+}
+```
+
+
+```{r}
+unmatched_co <- c()
+```
+
+
+```{r}
+for (i in 1:nrow(semi_bm_clean)){
+
+  if (typeof(find_comp(i, semi_bm_clean)) == "character"){
+    
+    unmatched_co <- append(unmatched_co, find_comp(i, semi_bm_clean))
+    
+  } 
+  
+  
+  if (typeof(find_comp(i)) == "list"){
+    
+    semi_companies_match <- semi_companies_match %>% bind_rows(find_comp(i, semi_bm_clean)) %>% filter(!is.na(company))
+    
+  } 
+  
+}
+```
+
+
+```{r}
+semi_bm_clean %>% filter(company %in% unmatched_co) %>% 
+  mutate(company = case_when(
+    company == "Entrepix Inc." ~ "Entrepix",
+    company == "Lasertel Inc." ~ "Lazer Tel Inc",
+    company == "Panjit International" ~ "Pan Jit Americas Inc", 
+    company == "Qorvo Inc." ~ "Qorvo Inc", 
+    company == "X-FAB Silicon Foundries" ~ "X-Fab Texas Inc"
+    
+    TRUE ~ company
+  ), 
+  city = case_when(
+    company %in% c("Entrepix", "Microchip") & city == "Tempe" ~ "Phoenix", 
+    company %in% c("ON Semiconductor Corp") & city == "Meridian" ~ "Nampa"
+    TRUE ~ city
+  ))
+```
+
+
+## Geolocating Data
+
+We then begin the process of geocoding. We will use [Google's geolocating service](https://developers.google.com/maps/documentation/geocoding/intro) to process our geolocation requests. To use this service, we need to get an [API key](https://developers.google.com/maps/documentation/geocoding/get-api-key)
+
+```{r, echo = FALSE, Include = FALSE}
+api_key <- c("AIzaSyA1pwzK3BaX7_um-_TUrS7aGfCHQvp68b8")
+```
+
+We define our function, which will take an address as an input and output a latitude and longitude result. 
+
+```{r}
+# Function to extract county name
+extract_county <- function(json_obj) {
+  # Check for county within address_components
+  county <- json_obj$results[[1]]$address_components %>%
+    purrr::map_chr(~ .x$long_name) %>%
+   grep("County", ., value = TRUE)
+  
+  return(county)
+
+}
+```
+
+```{r}
+geocodeAddress <- function(address) {
+  require(RJSONIO)
+  url <- "https://maps.googleapis.com/maps/api/geocode/json?address="
+  url <- URLencode(paste(url, address, sep = ""))
+  url <- URLencode(paste(url, "&key=", api_key, sep = ""))
+  x <- fromJSON(url, simplify = FALSE)
+  print(x$status)
+  if (x$status == "OK") {
+    out <- c(x$results[[1]]$geometry$location$lng,
+             x$results[[1]]$geometry$location$lat,
+             x$results[[1]]$formatted_address, 
+             extract_county(x))
+  } else {
+    out <- NA
+  }
+  Sys.sleep(0.2)  # API only allows 5 requests per second
+  out
+}
+```
+
+We now clean and prepare our data for geocoding. 
+
+```{r}
+semi_bm_final <- semi_bm_clean %>% 
+    mutate(company = case_when(
+      company == "Entrepix Inc." ~ "Entrepix",
+      company == "Lasertel Inc." ~ "Lazer Tel Inc",
+      company == "Panjit International" ~ "Pan Jit Americas Inc", 
+      company == "Qorvo Inc." ~ "Qorvo Inc", 
+      company == "X-FAB Silicon Foundries" ~ "X-Fab Texas Inc",
+      TRUE ~ company
+    ), 
+    city = case_when(
+      company %in% c("Entrepix", "Microchip") & city == "Tempe" ~ "Phoenix", 
+      company %in% c("ON Semiconductor Corp") & city == "Meridian" ~ "Nampa",
+      TRUE ~ city), 
+    location = paste(company, address, city, state_name, sep = ", "))
+```
+
+Now we loop through the addresses to get the latitude and longitude of each address and add it to the original address data frame in the  new columns lat and long. 
+
+```{r}
+origAddress <- semi_bm_final %>% 
+  distinct(company, location, state_name)
+```
+
+
+```{r, include = FALSE}
+for(i in 1:nrow(origAddress))
+{
+  result <- geocodeAddress(origAddress$location[i])
+  origAddress$long[i] <- as.numeric(result[1])
+  origAddress$lat[i] <- as.numeric(result[2])
+  origAddress$form_address[i] <- as.character(result[3])
+  origAddress$county[i] <- as.character(result[4])
+}
+```
+
+```{r}
+origAddress$county[56] <- "Dallas County"
+```
+
+```{r}
+county_crosswalk <- counties %>% select(county_name, area_fips = county_fips, state_fips, state_abbr = state_abbv, state_name) %>% distinct() %>% mutate(area_fips = as.numeric(area_fips))
+```
+
+
+```{r}
+semi_bm_location <- origAddress %>% 
+  rename(county_name = county) %>% 
+  left_join(county_crosswalk) %>% 
+  left_join(semi_bm_final, .)
+```
+
+```{r}
+semi_da_location <- semi_companies_clean %>% mutate(area_fips = state_fips*1000 + county_fips) %>% select(-c(state_fips)) %>% 
+  left_join(county_crosswalk)
+```
+
+## Final Match
+
+```{r}
+matched_co <- c()
+```
+
+
+```{r}
+unmatched_co <- c()
+```
+
+```{r}
+semi_companies_match <- semi_companies_clean[3]
+```
+
+```{r}
+for (i in 1:nrow(semi_bm_location)){
+
+  if (typeof(find_comp(i, semi_bm_location)) == "character"){
+    
+    unmatched_co <- append(unmatched_co, find_comp(i, semi_bm_location))
+    
+  } 
+  
+  
+  if (typeof(find_comp(i, semi_bm_location)) == "list"){
+    
+    matched_co <-  append(matched_co, find_comp(i, semi_bm_location) %>% select(company) %>% distinct() %>% unlist() %>% unname())
+    
+    semi_companies_match <- semi_companies_match %>% bind_rows(find_comp(i, semi_bm_location)) %>% filter(!is.na(company))
+    
+  } 
+  
+}
+```
+
+```{r}
+semi_bm_location %>% 
+saveRDS(here("bm_geocoded.RDS"))
+```
+
+## Final Measures
+
+```{r}
+bm_stats <- semi_bm_location %>% 
+  mutate(geom_cat = case_when(
+    curr_geom <= 0.007 ~ "Leading Edge", 
+    curr_geom > 0.007 & curr_geom <= 0.014 ~ "Advanced Capabilities", 
+    curr_geom > 0.014 & curr_geom <= 0.026 ~ "Cost Optimal", 
+    curr_geom > 0.026 & curr_geom <= 0.090 ~ "Mature", 
+    curr_geom > 0.090 ~ "Legacy"
+  ), matched = company %in% matched_co) %>% 
+  group_by(area_fips, county_name, state_name, FabType, geom_cat, curr_geom, company) %>%
+  reframe(n_fab = n(), matched_fab = sum(as.numeric(matched)))
+```
+
+```{r}
+comp_stats <- semi_da_location %>% 
+  mutate(matched = company %in% matched_co) %>% 
+  group_by(area_fips, county_name, state_name) %>% 
+  reframe(n_comps = n(), matched_comps = sum(as.numeric(matched)))
+```
+
+## Join with agglomeration data 
+
+```{r}
+semi_agg_sum <- semi_agg %>% 
+  select(NAME, state_abbr, horz_z, vert_z) %>% 
+  separate(NAME, into = c("county_name", "state_name"), sep = ", ", remove = FALSE)
+```
+
+```{r}
+focus_counties <- c("Maricopa County, Arizona", "Washington County, Oregon", "Dallas County, Texas", "Ada County, Idaho", "Lucas County, Ohio", "Broward County, Florida")
+```
+
+```{r}
+agg_measures <- semi_agg_sum %>% 
+  filter(NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_point(aes(x = horz_z, y = vert_z, label = NAME, color = state_abbr)) + 
+  guides(color = "none") + 
+  geom_label_repel(aes(x = horz_z, y = vert_z, label = NAME)) + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  labs(x = "Horizontal (Peer) Agglomeration \nEmployment, County X Industry", y = "Vertical (Supply-Chain) Agglomeration \nEmployment, County X Industry", shape = "")  + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+geom_graph <- bm_stats %>% 
+  filter(!is.na(geom_cat)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  group_by(curr_geom, NAME, geom_cat) %>% 
+  reframe(n_geom = sum(n_fab)) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  mutate(order = case_when(geom_cat == "Legacy" ~ 5, geom_cat == "Mature" ~ 4, geom_cat == "Cost Optimal" ~ 3, geom_cat == "Advanced Capabilities" ~ 2, geom_cat == "Leading Edge" ~ 1)) %>% 
+  ggplot() + 
+  geom_point(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), fill = geom_cat, size = n_geom), shape = 22) + 
+  geom_text(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), label = n_geom)) + 
+  scale_fill_brewer(palette = "BrBG") +
+  scale_size_continuous(range = c(10, 13)) + 
+  guides(size = "none", fill = "none") + 
+  labs(x ="", y = "Geometry") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(axis.text.x = element_text(size = 18))
+```
+
+```{r}
+comp_info <- bm_stats %>% 
+  filter(!is.na(geom_cat)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  group_by(curr_geom, FabType, NAME, company, geom_cat) %>% 
+  reframe(n_geom = sum(n_fab)) %>% 
+  mutate(rd_fab = case_when(
+    str_detect(FabType, "Fab") ~ "Fab", 
+    str_detect(FabType, "R&D") ~ "R&D"
+  )) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) 
+```
+
+```{r}
+fab_geom <- geom_graph + 
+  geom_label_repel(data = comp_info, aes(x = reorder(NAME, horz_z), y = factor(curr_geom), label = paste(rd_fab, sep = " -- "), fill = geom_cat, alpha = rd_fab), size = 6) + 
+  scale_alpha_discrete(range = c(0.5, 0.9)) 
+```
+
+```{r}
+"#FFFFFF" "#F0F0F0" "#D9D9D9" "#BDBDBD" "#969696" "#737373" "#525252" "#252525" "#000000"
+```
+
+
+```{r}
+test <- geom_graph + 
+  ggnewscale::new_scale_fill() + 
+  geom_text_repel(data = comp_info, aes(x = reorder(NAME, horz_z), y = factor(curr_geom), label = paste(company, rd_fab, sep = " -- "), alpha = rd_fab), size = 6) + 
+  scale_alpha_discrete(range = c(0.6, 0.8)) 
+```
+
+
+
+
+```{r}
+fab_geom_col <- bm_stats %>% 
+  filter(!is.na(geom_cat)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  group_by(curr_geom, FabType, NAME, company) %>% 
+  reframe(n_geom = sum(n_fab)) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_point(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), fill = factor(FabType, levels = c("CMP", "Fab & Backend", "Fab, BEOL", "Fab/EPI", "Fab", "Fab, Pilot", "Fab, Pilot, R&D", "Fab, R&D" , "Pilot", "R&D", "R&D, Pilot")), size = n_geom), shape = 22) + 
+  geom_label_repel(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), fill = factor(FabType, levels = c("CMP", "Fab & Backend", "Fab, BEOL", "Fab/EPI", "Fab", "Fab, Pilot", "Fab, Pilot, R&D", "Fab, R&D" , "Pilot", "R&D", "R&D, Pilot")), label = paste(FabType, sep = " -- ")), size = 6) + 
+  scale_fill_brewer(palette = "Spectral") +
+  scale_size_continuous(range = c(10, 13)) + 
+  guides(fill = "none", size = "none") + 
+  labs(x ="", y = "Geometry") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(axis.text.x = element_text(size = 18))
+```
+
+```{r}
+fab_geom_company <- bm_stats %>% 
+  filter(!is.na(geom_cat)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  group_by(curr_geom, FabType, NAME, company) %>% 
+  reframe(n_geom = sum(n_fab)) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_point(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), fill = factor(FabType, levels = c("CMP", "Fab & Backend", "Fab, BEOL", "Fab/EPI", "Fab", "Fab, Pilot", "Fab, Pilot, R&D", "Fab, R&D" , "Pilot", "R&D", "R&D, Pilot")), size = n_geom), shape = 22) + 
+  geom_label_repel(aes(x = reorder(NAME, horz_z), y = factor(curr_geom), fill = factor(FabType, levels = c("CMP", "Fab & Backend", "Fab, BEOL", "Fab/EPI", "Fab", "Fab, Pilot", "Fab, Pilot, R&D", "Fab, R&D" , "Pilot", "R&D", "R&D, Pilot")), label = paste(company, FabType, sep = " -- ")), size = 6) + 
+  scale_fill_brewer(palette = "Spectral") +
+  scale_size_continuous(range = c(10, 13)) + 
+  guides(fill = "none", size = "none") + 
+  labs(x ="", y = "Geometry") + 
+  theme_bw() + 
+  axis_theme + 
+  theme(axis.text.x = element_text(size = 18))
+```
+
+
+
+```{r}
+geom_stats <- bm_stats %>% 
+  filter(!is.na(geom_cat)) %>% 
+  group_by(curr_geom, area_fips, county_name, state_name, geom_cat) %>% 
+  reframe(n = sum(n_fab), matched_fab = sum(matched_fab)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", "),
+         order = case_when(geom_cat == "Legacy" ~ 5, geom_cat == "Mature" ~ 4, geom_cat == "Cost Optimal" ~ 3, geom_cat == "Advanced Capabilities" ~ 2, geom_cat == "Leading Edge" ~ 1)) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(NAME, horz_z), y = n, fill = factor(curr_geom), group = "NAME"), color = "black", position = "stack") + 
+  geom_label(aes(x = reorder(NAME, horz_z), y = n, fill = factor(curr_geom), label = curr_geom, group = "NAME"), color = "black", position = "stack") + 
+  scale_fill_manual(values = c(brewer.pal(12, "Spectral"), brewer.pal(9, "BuPu")[5:9])) +  
+  labs(x = "", y = "Number of Facilities") + 
+  guides(fill = "none") + 
+  theme_bw() + 
+  axis_theme
+```
+
+```{r}
+fab_stats <- bm_stats %>% 
+  filter(!is.na(FabType)) %>% 
+  group_by(FabType, area_fips, county_name, state_name) %>% 
+  reframe(n = sum(n_fab), matched_fab = sum(matched_fab)) %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(NAME, horz_z), y = n, fill = factor(FabType, levels = c("CMP", "Fab & Backend", "Fab, BEOL", "Fab/EPI", "Fab", "Fab, Pilot", "Fab, Pilot, R&D", "Fab, R&D" , "Pilot", "R&D", "R&D, Pilot"))), color = "Black") + 
+  scale_fill_brewer(palette = "Spectral") + 
+  labs(x = "", y = "Number of Facilities", fill = "Fab Type") + 
+  theme_bw() + 
+  axis_theme
+```
+
+
+```{r}
+firm_stats <- comp_stats %>% 
+  mutate(NAME = paste(county_name, state_name, sep = ", ")) %>% 
+  left_join(semi_agg_sum) %>% 
+  filter(!is.na(horz_z), NAME %in% focus_counties) %>% 
+  ggplot() + 
+  geom_col(aes(x = reorder(NAME, horz_z), y = n_comps)) + 
+  geom_col(aes(x = reorder(NAME, horz_z), y = matched_comps), fill = "forest green") + 
+  theme_bw() + 
+  labs(x = "", y = "Number of Companies") + 
+  axis_theme
+```
+
